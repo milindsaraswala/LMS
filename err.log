@@ -1,0 +1,21 @@
+CUSTOM LOADER COUNT: [ { test: /\.(woff|woff2)(\?v=\d+\.\d+\.\d+)?$/,
+    loader:
+     'url-loader?limit=10000&mimetype=application/font-woff2&name=fonts/[name].[hash].[ext]' },
+  { test: /\.ttf(\?v=\d+\.\d+\.\d+)?$/,
+    loader:
+     'url-loader?limit=10000&mimetype=application/octet-stream&name=fonts/[name].[hash].[ext]' },
+  { test: /\.eot(\?v=\d+\.\d+\.\d+)?$/,
+    loader: 'file-loader?name=fonts/[name].[hash].[ext]' },
+  { test: /\.svg(\?v=\d+\.\d+\.\d+)?$/,
+    loader:
+     'url-loader?limit=10000&mimetype=image/svg+xml&name=fonts/[name].[hash].[ext]' } ]
+[06:20:33] Finished subtask 'configure-webpack' after 329 ms
+[06:20:33] Starting subtask 'webpack'...
+[06:20:38] Error - [webpack] 'dist':
+./node_modules/devextreme/dist/css/icons/dxicons.woff2
+Module parse failed: F:\SP_SourceCode\Revamp\Hub\LMS\node_modules\devextreme\dist\css\icons\dxicons.woff2 Unexpected character ' ' (1:4)
+You may need an appropriate loader to handle this file type.
+(Source code omitted for this binary file)
+ @ ./node_modules/css-loader?{"minimize":true}!./node_modules/devextreme/dist/css/dx.light.css 7:4691-4723
+ @ ./node_modules/devextreme/dist/css/dx.light.css
+ @ ./lib/webparts/learningPortal/LearningPortalWebPart.js
