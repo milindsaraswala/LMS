@@ -1,8 +1,2 @@
-[06:33:08] Error - [webpack] 'dist':
-./node_modules/devextreme/dist/css/icons/dxicons.woff2
-Module parse failed: F:\SP_SourceCode\Revamp\Hub\LMS\node_modules\devextreme\dist\css\icons\dxicons.woff2 Unexpected character ' ' (1:4)
-You may need an appropriate loader to handle this file type.
-(Source code omitted for this binary file)
- @ ./node_modules/css-loader?{"minimize":true}!./node_modules/devextreme/dist/css/dx.light.css 7:4691-4723
- @ ./node_modules/devextreme/dist/css/dx.light.css
- @ ./lib/webparts/learningPortal/LearningPortalWebPart.js
+npm WARN devextreme-react@21.2.13 requires a peer of react@^16.2.0 || ^17.0.0 || ^18.0.0 but none is installed. You must install peer dependencies yourself.
+npm WARN devextreme-react@21.2.13 requires a peer of react-dom@^16.2.0 || ^17.0.0 || ^18.0.0 but none is installed. You must install peer dependencies yourself.
