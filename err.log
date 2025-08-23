@@ -1,84 +1,128 @@
-export interface Module {
-  Id: Id;
-  Title: string;
-  CourseId: Id;
-  Order0?: number;
-  Description?: string;
-}
+import * as React from 'react';
+import { Course, Lesson, Module } from '../common/models';
+import { getSP } from '../common/pnp';
 
-private buildModulesDataSource(): DevExpress.data.DataSource {
-		return new DevExpress.data.DataSource({
-			store: new DevExpress.data.CustomStore<any, any>({
-				key: 'Id',
-				load: async () => this.state.modules,
-				byKey: (key: Id) => {
-					const id = normKey(key);
-					for (let i = 0; i < this.state.modules.length; i++) {
-						if (this.state.modules[i].Id === id) return Promise.resolve(this.state.modules[i]);
-					}
-					return Promise.reject('not found');
-				},
-				insert: (values: Partial<Module>) => {
-					return new Promise<number>((resolve) => {
-						const newRow: Module = { Title: '', CourseId: 0, Order0: 0, ...values } as Module;
-						if (newRow.CourseId != null) newRow.CourseId = Number(newRow.CourseId);
-						newRow.Id = this.tempId();
-						this.setState(
-							(s) => ({
-								modules: s.modules.concat([newRow]),
-								newModules: s.newModules.concat([newRow])
-							}),
-							() => {
-								this.refreshLookups();
-								resolve(newRow.Id);
-							}
-						);
-					});
-				},
-				update: (key: Id, values: Partial<Module>) => {
-					return new Promise<void>((resolve, reject) => {
-						if (values.CourseId != null) values.CourseId = Number(values.CourseId);
-						const id = normKey(key);
-						this.setState(
-							(s) => {
-								const idx = findIndexById(s.modules, id);
-								if (idx < 0) {
-									reject('not  found');
-									return null;
-								}
-								if (idx < 0) return null;
-								const updated: any = Object.assign({}, s.courses[idx], values);
-								const modules = s.modules.slice();
-								modules[idx] = updated;
+type Props = { context: any; courseId: number; preview?: boolean };
+type State = {
+	loading: boolean;
+	course?: Course;
+	modules: Module[];
+	lessonsByModule: { [k: number]: Lesson[] };
+	activeModuleId?: number;
+	activeLessonId?: number;
+	error?: string;
+};
 
-								const alreadyNew = findIndexById(s.newModules, id) >= 0;
-								const updModules = alreadyNew ? s.updModules : upsertById(s.updModules, updated);
-								return { modules, updModules };
-							},
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				},
-				remove: (key: Id) => {
-					return new Promise<void>((resolve) => {
-						const id = normKey(key);
-						this.setState(
-							(s) => ({
-								modules: s.modules.filter((x) => x.Id !== id),
-								newModules: s.newModules.filter((x) => x.Id !== id),
-								updModules: s.updModules.filter((x) => x.Id !== id),
-								delModules: id > 0 ? s.delModules.concat([id]) : s.delModules
-							}),
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				}
-			})
-		});
+export default class CoursePlayer extends React.Component<Props, State> {
+	constructor(props: Props) {
+		super(props);
+		this.state = { loading: true, modules: [], lessonsByModule: {} };
 	}
+
+	public componentDidMount() {
+		this.load();
+	}
+
+	public render() {
+		if (this.state.loading) return <div>Loading…</div>;
+		if (this.state.error) return <div style={{ color: 'red' }}>Error: {this.state.error}</div>;
+
+		const { course, modules, lessonsByModule, activeModuleId, activeLessonId } = this.state;
+		const active = activeModuleId && activeLessonId ? (lessonsByModule[activeModuleId] || []).filter((x) => x.Id === activeLessonId)[0] : null;
+
+		return (
+			<div>
+				<h3>{course ? course.Title : 'Course'}</h3>
+				<div style={{ display: 'flex', gap: '16px' }}>
+					<div style={{ width: '30%' }}>
+						{modules.map((m) => (
+							<div key={m.Id}>
+								<h4>{m.Title}</h4>
+								<ul>
+									{(lessonsByModule[m.Id] || []).map((l) => (
+										<li key={l.Id}>
+											<a
+												href='#'
+												onClick={(e) => {
+													e.preventDefault();
+													this.setState({ activeModuleId: m.Id, activeLessonId: l.Id });
+												}}>
+												{l.Order0 || 0}. {l.Title}
+											</a>
+										</li>
+									))}
+								</ul>
+							</div>
+						))}
+					</div>
+					<div style={{ flex: 1 }}>{active ? this.renderLesson(active) : <div>Select a lesson…</div>}</div>
+				</div>
+			</div>
+		);
+	}
+
+	private load() {
+		const sp = getSP(this.props.context);
+		const id = this.props.courseId;
+		if (!id) {
+			this.setState({ loading: false, error: 'No courseId configured' });
+			return;
+		}
+
+		sp.web.lists
+			.getByTitle('Courses')
+			.items.getById(id)()
+			.then((course: any) => {
+				this.setState({ course: { Id: course.Id, Title: course.Title, Description: course.Description } });
+				return sp.web.lists.getByTitle('Modules').items.select('Id', 'Title', 'Order0').filter(`CourseId eq ${id}`).orderBy('Order0', true).top(5000)();
+			})
+			.then((mods: any[]) => {
+				const modules: Module[] = mods.map((m) => ({ Id: m.Id, Title: m.Title, Order0: m.Order0, CourseId: this.props.courseId }));
+				this.setState({ modules });
+				if (!modules.length) {
+					this.setState({ loading: false });
+					return Promise.resolve([]);
+				}
+				const ids = modules.map((m) => m.Id).join(',');
+				return getSP(this.props.context)
+					.web.lists.getByTitle('Lessons')
+					.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'ModuleId/Id')
+					.expand('ModuleId')
+					.filter(`ModuleId in (${ids})`)
+					.orderBy('ModuleId', true)
+					.orderBy('Order0', true)
+					.top(5000)();
+			})
+			.then((lessons: any[]) => {
+				const by: any = {};
+				(lessons || []).forEach((l) => {
+					const modId = l.ModuleId ? l.ModuleId.Id : 0;
+					by[modId] = by[modId] || [];
+					by[modId].push({
+						Id: l.Id,
+						Title: l.Title,
+						Order0: l.Order0,
+						ContentType: l.ContentTypeChoice,
+						ContentUrl: l.ContentUrl,
+						HtmlContent: l.HtmlContent,
+						QuizJson: l.QuizJson,
+						EstimatedMinutes: l.EstimatedMinutes,
+						ModuleId: modId
+					});
+				});
+				const firstModuleId = this.state.modules.length ? this.state.modules[0].Id : undefined;
+				const firstLessonId = firstModuleId && by[firstModuleId] && by[firstModuleId][0] ? by[firstModuleId][0].Id : undefined;
+				this.setState({ lessonsByModule: by, activeModuleId: firstModuleId, activeLessonId: firstLessonId, loading: false });
+			})
+			.catch((e) => this.setState({ loading: false, error: e && e.message ? e.message : String(e) }));
+	}
+
+	private renderLesson(l: Lesson) {
+		if (l.ContentType === 'HTML') return <div dangerouslySetInnerHTML={{ __html: l.HtmlContent || '' }} />;
+		if (l.ContentType === 'PDF' || l.ContentType === 'PPT' || l.ContentType === 'Link') return <iframe src={l.ContentUrl} style={{ width: '100%', height: 600 }} />;
+		if (l.ContentType === 'Video') return <video src={l.ContentUrl} controls style={{ width: '100%' }} />;
+		if (l.ContentType === 'Audio') return <audio src={l.ContentUrl} controls />;
+		if (l.ContentType === 'Quiz') return <div>Quiz (todo)</div>;
+		return <div>Unsupported content.</div>;
+	}
+}
