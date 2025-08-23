@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Course, Lesson, Module } from '../common/models';
 import { getSP } from '../common/pnp';
 
-type Props = { context: any; courseId: number; preview?: boolean };
+type Props = { context: any; courseId?: number; courseCode?: string; preview?: boolean };
 type State = {
 	loading: boolean;
 	course?: Course;
@@ -17,6 +17,30 @@ export default class CoursePlayer extends React.Component<Props, State> {
 	constructor(props: Props) {
 		super(props);
 		this.state = { loading: true, modules: [], lessonsByModule: {} };
+	}
+
+	// ---------------- helpers ----------------
+	private getCourseIdFromQS(): number | null {
+		const qs = new URLSearchParams(window.location.search);
+		const v = qs.get('courseId');
+		return v ? Number(v) : null;
+	}
+	private escOData(s: string) {
+		return (s || '').replace(/'/g, "''");
+	}
+
+	private async resolveCourseId(sp: any): Promise<number | null> {
+		const qs = this.getCourseIdFromQS();
+		if (qs && !isNaN(qs)) return qs;
+
+		if (this.props.courseId && this.props.courseId > 0) return Number(this.props.courseId);
+
+		if (this.props.courseCode) {
+			const code = this.escOData(this.props.courseCode);
+			const found = await sp.web.lists.getByTitle('Courses').items.select('Id', 'Code').filter(`Code eq '${code}'`).top(1)();
+			return found.length ? found[0].Id : null;
+		}
+		return null;
 	}
 
 	public componentDidMount() {
@@ -47,7 +71,8 @@ export default class CoursePlayer extends React.Component<Props, State> {
 													e.preventDefault();
 													this.setState({ activeModuleId: m.Id, activeLessonId: l.Id });
 												}}>
-												{l.Order0 || 0}. {l.Title}
+												{(l.Order0 || 0) + '. '}
+												{l.Title}
 											</a>
 										</li>
 									))}
@@ -61,60 +86,86 @@ export default class CoursePlayer extends React.Component<Props, State> {
 		);
 	}
 
-	private load() {
+	private async load() {
 		const sp = getSP(this.props.context);
-		const id = this.props.courseId;
-		if (!id) {
-			this.setState({ loading: false, error: 'No courseId configured' });
-			return;
-		}
 
-		sp.web.lists
-			.getByTitle('Courses')
-			.items.getById(id)()
-			.then((course: any) => {
-				this.setState({ course: { Id: course.Id, Title: course.Title, Description: course.Description } });
-				return sp.web.lists.getByTitle('Modules').items.select('Id', 'Title', 'Order0').filter(`CourseId eq ${id}`).orderBy('Order0', true).top(5000)();
-			})
-			.then((mods: any[]) => {
-				const modules: Module[] = mods.map((m) => ({ Id: m.Id, Title: m.Title, Order0: m.Order0, CourseId: this.props.courseId }));
-				this.setState({ modules });
-				if (!modules.length) {
-					this.setState({ loading: false });
-					return Promise.resolve([]);
-				}
-				const ids = modules.map((m) => m.Id).join(',');
-				return getSP(this.props.context)
-					.web.lists.getByTitle('Lessons')
-					.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'ModuleId/Id')
-					.expand('ModuleId')
-					.filter(`ModuleId in (${ids})`)
+		try {
+			const id = this.props.courseId;
+			if (!id) {
+				this.setState({ loading: false, error: 'No courseId configured' });
+				return;
+			}
+
+			// Course
+			const courseItem = await sp.web.lists.getByTitle('Courses').items.select('Id', 'Title', 'Description', 'ThumbnailUrl').filter(`Id eq ${id}`).top(1)();
+			if (!courseItem.length) {
+				this.setState({ loading: false, error: 'Course not found' });
+				return;
+			}
+			const course = courseItem[0];
+			this.setState({
+				course: { Id: course.Id, Title: course.Title, Description: course.Description, ThumbnailUrl: course.ThumbnailUrl }
+			});
+
+			const modsRaw = await sp.web.lists
+				.getByTitle('Modules')
+				.items.select('Id', 'Title', 'Order0', 'CourseId')
+				.filter(`CourseId eq ${id}`)
+				.orderBy('Order0', true)
+				.orderBy('Id', true)
+				.top(5000)();
+
+			const modules: Module[] = modsRaw.map((m: any) => ({
+				Id: m.Id,
+				Title: m.Title,
+				Order0: m.Order0,
+				CourseId: id
+			}));
+			this.setState({ modules });
+
+			let lessonsBy: { [k: number]: Lesson[] } = {};
+			if (modules.length) {
+				const ids: number[] = modules.map((m) => m.Id);
+
+				const lessonsRaw = await sp.web.lists
+					.getByTitle('Lessons')
+					.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'Module/Id', 'Module/Title')
+					.expand('Module')
 					.orderBy('ModuleId', true)
 					.orderBy('Order0', true)
+					.orderBy('Id', true)
 					.top(5000)();
-			})
-			.then((lessons: any[]) => {
-				const by: any = {};
-				(lessons || []).forEach((l) => {
-					const modId = l.ModuleId ? l.ModuleId.Id : 0;
-					by[modId] = by[modId] || [];
-					by[modId].push({
+
+				(lessonsRaw || []).forEach((l: Lesson) => {
+					const modId = l.Module ? l.Module.Id : l.ModuleId;
+
+					if (ids.indexOf(modId) === -1) return;
+					(lessonsBy[modId] = lessonsBy[modId] || []).push({
 						Id: l.Id,
 						Title: l.Title,
 						Order0: l.Order0,
-						ContentType: l.ContentTypeChoice,
+						ContentType: l.ContentType,
 						ContentUrl: l.ContentUrl,
 						HtmlContent: l.HtmlContent,
 						QuizJson: l.QuizJson,
 						EstimatedMinutes: l.EstimatedMinutes,
 						ModuleId: modId
-					});
+					} as Lesson);
 				});
-				const firstModuleId = this.state.modules.length ? this.state.modules[0].Id : undefined;
-				const firstLessonId = firstModuleId && by[firstModuleId] && by[firstModuleId][0] ? by[firstModuleId][0].Id : undefined;
-				this.setState({ lessonsByModule: by, activeModuleId: firstModuleId, activeLessonId: firstLessonId, loading: false });
-			})
-			.catch((e) => this.setState({ loading: false, error: e && e.message ? e.message : String(e) }));
+			}
+
+			const firstModuleId = modules.length ? modules[0].Id : undefined;
+			const firstLessonId = firstModuleId && lessonsBy[firstModuleId] && lessonsBy[firstModuleId][0] ? lessonsBy[firstModuleId][0].Id : undefined;
+
+			this.setState({
+				lessonsByModule: lessonsBy,
+				activeModuleId: firstModuleId,
+				activeLessonId: firstLessonId,
+				loading: false
+			});
+		} catch (e) {
+			this.setState({ loading: false, error: e && (e as any).message ? (e as any).message : String(e) });
+		}
 	}
 
 	private renderLesson(l: Lesson) {
