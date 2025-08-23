@@ -1,2 +1,84 @@
-npm WARN devextreme-react@21.2.13 requires a peer of react@^16.2.0 || ^17.0.0 || ^18.0.0 but none is installed. You must install peer dependencies yourself.
-npm WARN devextreme-react@21.2.13 requires a peer of react-dom@^16.2.0 || ^17.0.0 || ^18.0.0 but none is installed. You must install peer dependencies yourself.
+export interface Module {
+  Id: Id;
+  Title: string;
+  CourseId: Id;
+  Order0?: number;
+  Description?: string;
+}
+
+private buildModulesDataSource(): DevExpress.data.DataSource {
+		return new DevExpress.data.DataSource({
+			store: new DevExpress.data.CustomStore<any, any>({
+				key: 'Id',
+				load: async () => this.state.modules,
+				byKey: (key: Id) => {
+					const id = normKey(key);
+					for (let i = 0; i < this.state.modules.length; i++) {
+						if (this.state.modules[i].Id === id) return Promise.resolve(this.state.modules[i]);
+					}
+					return Promise.reject('not found');
+				},
+				insert: (values: Partial<Module>) => {
+					return new Promise<number>((resolve) => {
+						const newRow: Module = { Title: '', CourseId: 0, Order0: 0, ...values } as Module;
+						if (newRow.CourseId != null) newRow.CourseId = Number(newRow.CourseId);
+						newRow.Id = this.tempId();
+						this.setState(
+							(s) => ({
+								modules: s.modules.concat([newRow]),
+								newModules: s.newModules.concat([newRow])
+							}),
+							() => {
+								this.refreshLookups();
+								resolve(newRow.Id);
+							}
+						);
+					});
+				},
+				update: (key: Id, values: Partial<Module>) => {
+					return new Promise<void>((resolve, reject) => {
+						if (values.CourseId != null) values.CourseId = Number(values.CourseId);
+						const id = normKey(key);
+						this.setState(
+							(s) => {
+								const idx = findIndexById(s.modules, id);
+								if (idx < 0) {
+									reject('not  found');
+									return null;
+								}
+								if (idx < 0) return null;
+								const updated: any = Object.assign({}, s.courses[idx], values);
+								const modules = s.modules.slice();
+								modules[idx] = updated;
+
+								const alreadyNew = findIndexById(s.newModules, id) >= 0;
+								const updModules = alreadyNew ? s.updModules : upsertById(s.updModules, updated);
+								return { modules, updModules };
+							},
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				},
+				remove: (key: Id) => {
+					return new Promise<void>((resolve) => {
+						const id = normKey(key);
+						this.setState(
+							(s) => ({
+								modules: s.modules.filter((x) => x.Id !== id),
+								newModules: s.newModules.filter((x) => x.Id !== id),
+								updModules: s.updModules.filter((x) => x.Id !== id),
+								delModules: id > 0 ? s.delModules.concat([id]) : s.delModules
+							}),
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				}
+			})
+		});
+	}
