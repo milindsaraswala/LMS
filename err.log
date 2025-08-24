@@ -1,179 +1,727 @@
+/// <reference path="../../../../../node_modules/@types/devextreme/dx.all.d.ts" />
+import 'devextreme';
+import * as $ from 'jquery';
 import * as React from 'react';
-import { Course, Lesson, Module } from '../common/models';
+import { ContentKind, Course, Id, Lesson, Module } from '../common/models';
 import { getSP } from '../common/pnp';
+import { findIndexById, normKey, upsertById } from '../common/utils';
 
-type Props = { context: any; courseId?: number; courseCode?: string; preview?: boolean };
+type Props = { context: any };
 type State = {
 	loading: boolean;
-	course?: Course;
-	modules: Module[];
-	lessonsByModule: { [k: number]: Lesson[] };
-	activeModuleId?: number;
-	activeLessonId?: number;
 	error?: string;
+
+	courses: Course[];
+	modules: Module[];
+	lessons: Lesson[];
+
+	newCourses: Course[];
+	updCourses: Course[];
+	delCourses: Id[];
+
+	newModules: Module[];
+	updModules: Module[];
+	delModules: Id[];
+
+	newLessons: Lesson[];
+	updLessons: Lesson[];
+	delLessons: Id[];
 };
 
-export default class CoursePlayer extends React.Component<Props, State> {
+export default class AdminBuilder extends React.Component<Props, State> {
+	private coursesGridRef: HTMLDivElement = null as any;
+	private modulesGridRef: HTMLDivElement = null as any;
+	private lessonsGridRef: HTMLDivElement = null as any;
+
+	// private coursesGrid: any;
+	// private modulesGrid: any;
+	// private lessonsGrid: any;
+
+	private coursesDs: DevExpress.data.DataSource;
+	private modulesDs: DevExpress.data.DataSource;
+	private lessonsDs: DevExpress.data.DataSource;
+
+	private _tempId = -1;
+
 	constructor(props: Props) {
 		super(props);
-		this.state = { loading: true, modules: [], lessonsByModule: {} };
+		this.state = {
+			loading: true,
+			courses: [],
+			modules: [],
+			lessons: [],
+
+			newCourses: [],
+			updCourses: [],
+			delCourses: [],
+
+			newModules: [],
+			updModules: [],
+			delModules: [],
+
+			newLessons: [],
+			updLessons: [],
+			delLessons: []
+		};
+
+		this.coursesDs = this.buildCoursesDataSource();
+		this.modulesDs = this.buildModulesDataSource();
+		this.lessonsDs = this.buildLessonsDataSource();
 	}
 
-	// ---------------- helpers ----------------
-	private getCourseIdFromQS(): number | null {
-		const qs = new URLSearchParams(window.location.search);
-		const v = qs.get('courseId');
-		return v ? Number(v) : null;
-	}
-	private escOData(s: string) {
-		return (s || '').replace(/'/g, "''");
-	}
-
-	private async resolveCourseId(sp: any): Promise<number | null> {
-		const qs = this.getCourseIdFromQS();
-		if (qs && !isNaN(qs)) return qs;
-
-		if (this.props.courseId && this.props.courseId > 0) return Number(this.props.courseId);
-
-		if (this.props.courseCode) {
-			const code = this.escOData(this.props.courseCode);
-			const found = await sp.web.lists.getByTitle('Courses').items.select('Id', 'Code').filter(`Code eq '${code}'`).top(1)();
-			return found.length ? found[0].Id : null;
+	public async componentDidMount() {
+		try {
+			await this.loadAll();
+			this.setState({ loading: false }, () => {
+				this.buildAllGrids();
+			});
+		} catch (e) {
+			this.setState({ loading: false, error: e && e.message ? e.message : String(e) });
 		}
-		return null;
 	}
 
-	public componentDidMount() {
-		this.load();
+	public componentWillUnmount(): void {
+		const cg = $(this.coursesGridRef).data('dxDataGrid');
+		if (cg && cg.dispose) cg.dispose();
+
+		const mg = $(this.modulesGridRef).data('dxDataGrid');
+		if (mg && mg.dispose) mg.dispose();
+
+		const lg = $(this.lessonsGridRef).data('dxDataGrid');
+		if (lg && lg.dispose) lg.dispose();
 	}
 
 	public render() {
 		if (this.state.loading) return <div>Loading…</div>;
 		if (this.state.error) return <div style={{ color: 'red' }}>Error: {this.state.error}</div>;
 
-		const { course, modules, lessonsByModule, activeModuleId, activeLessonId } = this.state;
-		const active = activeModuleId && activeLessonId ? (lessonsByModule[activeModuleId] || []).filter((x) => x.Id === activeLessonId)[0] : null;
-
 		return (
 			<div>
-				<h3>{course ? course.Title : 'Course'}</h3>
-				<div style={{ display: 'flex', gap: '16px' }}>
-					<div style={{ width: '30%' }}>
-						{modules.map((m) => (
-							<div key={m.Id}>
-								<h4>{m.Title}</h4>
-								<ul>
-									{(lessonsByModule[m.Id] || []).map((l) => (
-										<li key={l.Id}>
-											<a
-												href='#'
-												onClick={(e) => {
-													e.preventDefault();
-													this.setState({ activeModuleId: m.Id, activeLessonId: l.Id });
-												}}>
-												{(l.Order0 || 0) + '. '}
-												{l.Title}
-											</a>
-										</li>
-									))}
-								</ul>
-							</div>
-						))}
-					</div>
-					<div style={{ flex: 1 }}>{active ? this.renderLesson(active) : <div>Select a lesson…</div>}</div>
+				<h3>Admin Builder</h3>
+				<p style={{ marginTop: 0 }}>
+					Edit below, then click <b>Save changes</b>. All edits are kept in-memory until saved.
+				</p>
+
+				<h4>Courses</h4>
+				<div ref={(el) => (this.coursesGridRef = el as any)} />
+
+				<h4 style={{ marginTop: 24 }}>Modules</h4>
+				<div ref={(el) => (this.modulesGridRef = el as any)} />
+
+				<h4 style={{ marginTop: 24 }}>Lessons</h4>
+				<div ref={(el) => (this.lessonsGridRef = el as any)} />
+
+				<div style={{ marginTop: 24 }}>
+					<button onClick={this.onSave}>Save changes</button>
 				</div>
 			</div>
 		);
 	}
 
-	private async load() {
+	private tempId() {
+		return this._tempId--;
+	}
+
+	private async loadAll() {
+		const sp = getSP(this.props.context);
+
+		const [courses, modules, lessons] = await Promise.all([
+			sp.web.lists.getByTitle('Courses').items.select('Id', 'Title', 'Code', 'Description', 'DurationMinutes', 'Level', 'Status', 'ThumbnailUrl').orderBy('Id', true).top(5000)(),
+
+			sp.web.lists.getByTitle('Modules').items.select('Id', 'Title', 'Order0', 'Description', 'Course/Id').expand('Course').orderBy('Order0', true).orderBy('Id', true).top(5000)(),
+
+			sp.web.lists
+				.getByTitle('Lessons')
+				.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'Module/Id')
+				.expand('Module')
+				.orderBy('ModuleId', true)
+				.orderBy('Order0', true)
+				.orderBy('Id', true)
+				.top(5000)()
+		]);
+
+		const mCourses: Course[] = courses.map((c: Course) => ({
+			Id: c.Id,
+			Title: c.Title,
+			Code: c.Code,
+			Description: c.Description,
+			DurationMinutes: c.DurationMinutes,
+			Level: c.Level,
+			Status: c.Status,
+			ThumbnailUrl: c.ThumbnailUrl
+		}));
+
+		const mModules: Module[] = modules.map((m: any) => ({
+			Id: m.Id,
+			Title: m.Title,
+			Order0: m.Order0,
+			Description: m.Description,
+			CourseId: m.CourseId ? m.CourseId.Id : 0
+		}));
+
+		const mLessons: Lesson[] = lessons.map((l: any) => ({
+			Id: l.Id,
+			Title: l.Title,
+			ContentType: l.ContentType as ContentKind,
+			ContentUrl: l.ContentUrl,
+			HtmlContent: l.HtmlContent,
+			QuizJson: l.QuizJson,
+			EstimatedMinutes: l.EstimatedMinutes,
+			Order0: l.Order0,
+			ModuleId: l.ModuleId ? l.ModuleId.Id : 0
+		}));
+
+		this.setState({ courses: mCourses, modules: mModules, lessons: mLessons });
+	}
+
+	private buildCoursesDataSource(): DevExpress.data.DataSource {
+		return new DevExpress.data.DataSource({
+			store: new DevExpress.data.CustomStore<any, any>({
+				key: 'Id',
+				load: async () => this.state.courses,
+				byKey: (key: Id) => {
+					const id = normKey(key);
+					for (let i = 0; i < this.state.courses.length; i++) {
+						if (this.state.courses[i].Id === id) return Promise.resolve(this.state.courses[i]);
+					}
+					return Promise.reject('not found');
+				},
+				insert: (values: Partial<Course>) => {
+					return new Promise<number>((resolve) => {
+						const newRow: Course = { Title: '', Status: 'Draft', ...values } as Course;
+						newRow.Id = this.tempId();
+						this.setState(
+							(s) => ({
+								courses: s.courses.concat([newRow]),
+								newCourses: s.newCourses.concat([newRow])
+							}),
+							() => {
+								this.refreshLookups();
+								resolve(newRow.Id);
+							}
+						);
+					});
+				},
+				update: (key: Id, values: Partial<Course>) => {
+					return new Promise<void>((resolve, reject) => {
+						const id = normKey(key);
+						this.setState(
+							(s) => {
+								const idx = findIndexById(s.courses, id);
+								if (idx < 0) {
+									reject('not  found');
+									return null;
+								}
+								const updated: any = Object.assign({}, s.courses[idx], values);
+								const courses = s.courses.slice();
+								courses[idx] = updated;
+
+								const alreadyNew = findIndexById(s.newCourses, id) >= 0;
+								const updCourses = alreadyNew ? s.updCourses : upsertById(s.updCourses, updated);
+								return { courses, updCourses };
+							},
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				},
+				remove: (key: Id) => {
+					return new Promise<void>((resolve) => {
+						const id = normKey(key);
+						this.setState(
+							(s) => ({
+								courses: s.courses.filter((x) => x.Id !== id),
+								newCourses: s.newCourses.filter((x) => x.Id !== id),
+								updCourses: s.updCourses.filter((x) => x.Id !== id),
+								delCourses: id > 0 ? s.delCourses.concat([id]) : s.delCourses
+							}),
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				}
+			})
+		});
+	}
+
+	private buildModulesDataSource(): DevExpress.data.DataSource {
+		return new DevExpress.data.DataSource({
+			store: new DevExpress.data.CustomStore<any, any>({
+				key: 'Id',
+				load: async () => this.state.modules,
+				byKey: (key: Id) => {
+					const id = normKey(key);
+					for (let i = 0; i < this.state.modules.length; i++) {
+						if (this.state.modules[i].Id === id) return Promise.resolve(this.state.modules[i]);
+					}
+					return Promise.reject('not found');
+				},
+				insert: (values: Partial<Module>) => {
+					return new Promise<number>((resolve) => {
+						const newRow: Module = { Title: '', CourseId: 0, Order0: 0, ...values } as Module;
+						if (newRow.CourseId != null) newRow.CourseId = Number(newRow.CourseId);
+						newRow.Id = this.tempId();
+						this.setState(
+							(s) => ({
+								modules: s.modules.concat([newRow]),
+								newModules: s.newModules.concat([newRow])
+							}),
+							() => {
+								this.refreshLookups();
+								resolve(newRow.Id);
+							}
+						);
+					});
+				},
+				update: (key: Id, values: Partial<Module>) => {
+					return new Promise<void>((resolve, reject) => {
+						if (values.CourseId != null) values.CourseId = Number(values.CourseId);
+						const id = normKey(key);
+						this.setState(
+							(s) => {
+								const idx = findIndexById(s.modules, id);
+								if (idx < 0) {
+									reject('not  found');
+									return null;
+								}
+								if (idx < 0) return null;
+								const updated: any = Object.assign({}, s.modules[idx], values);
+								const modules = s.modules.slice();
+								modules[idx] = updated;
+
+								const alreadyNew = findIndexById(s.newModules, id) >= 0;
+								const updModules = alreadyNew ? s.updModules : upsertById(s.updModules, updated);
+								return { modules, updModules };
+							},
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				},
+				remove: (key: Id) => {
+					return new Promise<void>((resolve) => {
+						const id = normKey(key);
+						this.setState(
+							(s) => ({
+								modules: s.modules.filter((x) => x.Id !== id),
+								newModules: s.newModules.filter((x) => x.Id !== id),
+								updModules: s.updModules.filter((x) => x.Id !== id),
+								delModules: id > 0 ? s.delModules.concat([id]) : s.delModules
+							}),
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				}
+			})
+		});
+	}
+
+	private buildLessonsDataSource(): DevExpress.data.DataSource {
+		return new DevExpress.data.DataSource({
+			store: new DevExpress.data.CustomStore<any, any>({
+				key: 'Id',
+				load: () => Promise.resolve(this.state.lessons),
+				byKey: (key: Id) => {
+					const id = normKey(key);
+					for (let i = 0; i < this.state.lessons.length; i++) {
+						if (this.state.lessons[i].Id === id) return Promise.resolve(this.state.lessons[i]);
+					}
+					return Promise.reject('not found');
+				},
+				insert: (values: Partial<Lesson>) =>
+					new Promise<number>((resolve) => {
+						const newRow: Lesson = { Title: '', ModuleId: 0, Order0: 0, ContentType: 'HTML', ...values } as Lesson;
+						if (newRow.ModuleId != null) newRow.ModuleId = Number(newRow.ModuleId);
+						newRow.Id = this.tempId();
+						this.setState(
+							(s) => ({
+								lessons: s.lessons.concat([newRow]),
+								newLessons: s.newLessons.concat([newRow])
+							}),
+							() => {
+								this.refreshLookups();
+								resolve(newRow.Id);
+							}
+						);
+					}),
+				update: (key: Id, values: Partial<Lesson>) => {
+					return new Promise<void>((resolve, reject) => {
+						if (values.ModuleId != null) values.ModuleId = Number(values.ModuleId);
+						const id = normKey(key);
+						this.setState(
+							(s) => {
+								const idx = findIndexById(s.lessons, id);
+								if (idx < 0) {
+									reject('not  found');
+									return null;
+								}
+								const updated: any = Object.assign({}, s.lessons[idx], values);
+								const lessons = s.lessons.slice();
+								lessons[idx] = updated;
+
+								const alreadyNew = findIndexById(s.newLessons, id) >= 0;
+								const updLessons = alreadyNew ? s.updLessons : upsertById(s.updLessons, updated);
+								return { lessons, updLessons };
+							},
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				},
+				remove: (key: Id) => {
+					return new Promise<void>((resolve) => {
+						const id = normKey(key);
+						this.setState(
+							(s) => ({
+								lessons: s.lessons.filter((x) => x.Id !== id),
+								newLessons: s.newLessons.filter((x) => x.Id !== id),
+								updLessons: s.updLessons.filter((x) => x.Id !== id),
+								delLessons: id > 0 ? s.delLessons.concat([id]) : s.delLessons
+							}),
+							() => {
+								this.refreshLookups();
+								resolve();
+							}
+						);
+					});
+				}
+			})
+		});
+	}
+
+	private buildAllGrids() {
+		// Courses grid
+		$(this.coursesGridRef).dxDataGrid({
+			dataSource: this.coursesDs,
+			showBorders: true,
+			height: 300,
+			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true },
+			columns: [
+				{ dataField: 'Title', caption: 'Course Title', validationRules: [{ type: 'required' }] },
+				{ dataField: 'Code', caption: 'Code', width: 120 },
+				{ dataField: 'Level', caption: 'Level', lookup: { dataSource: ['Beginner', 'Intermediate', 'Advanced'] } },
+				{ dataField: 'Status', caption: 'Status', width: 120, lookup: { dataSource: ['Draft', 'Published'] } },
+				{ dataField: 'DurationMinutes', caption: 'Duration (min)', width: 140, dataType: 'number' },
+				{ dataField: 'ThumbnailUrl', caption: 'Thumbnail URL', width: 260 }
+			],
+			onRowInserted: () => (this.modulesDs as any).reload(),
+			onRowUpdated: () => (this.modulesDs as any).reload(),
+			onRowRemoved: () => {
+				// Remove child modules/lessons client-side if their parent course vanished
+				this.setState((s) => {
+					const keptModules = s.modules.filter((m) => s.courses.some((c) => c.Id === m.CourseId));
+					const keptLessons = s.lessons.filter((l) => keptModules.some((m) => m.Id === l.ModuleId));
+					return { modules: keptModules, lessons: keptLessons };
+				});
+				(this.modulesDs as any).reload();
+				(this.lessonsDs as any).reload();
+			}
+		});
+
+		// Modules grid
+		$(this.modulesGridRef).dxDataGrid({
+			dataSource: this.modulesDs,
+			showBorders: true,
+			height: 320,
+			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true },
+			columns: [
+				{ dataField: 'Title', caption: 'Module Title', validationRules: [{ type: 'required' }] },
+				{
+					dataField: 'CourseId',
+					caption: 'Course',
+					setCellValue(newData, value) {
+						newData.CourseId = value === null ? null : Number(value);
+					},
+					lookup: {
+						dataSource: this.state.courses,
+						valueExpr: 'Id',
+						displayExpr: 'Title'
+					},
+					width: 240,
+					validationRules: [{ type: 'required' }]
+				},
+				{ dataField: 'Order0', caption: 'Order', dataType: 'number', width: 100 },
+				{ dataField: 'Description', caption: 'Description' }
+			],
+			onEditorPreparing: (e: DevExpress.ui.dxDataGrid.EditorPreparingEvent<any, any>) => {
+				if (e.parentType === 'dataRow' && e.dataField === 'CourseId') {
+					e.editorName = 'dxSelectBox';
+					e.editorOptions = e.editorOptions || {};
+					e.editorOptions.dataSource = this.state.courses;
+					e.editorOptions.valueExpr = 'Id';
+					e.editorOptions.displayExpr = 'Title';
+					e.editorOptions.searchEnabled = true;
+					e.editorOptions.openFieldClick = true;
+				}
+			},
+			onRowInserted: () => (this.lessonsDs as any).reload(),
+			onRowUpdated: () => (this.lessonsDs as any).reload(),
+			onRowRemoved: () => {
+				// Remove child lessons client-side if their parent module vanished
+				this.setState((s) => {
+					const keptLessons = s.lessons.filter((l) => s.modules.some((m) => m.Id === l.ModuleId));
+					return { lessons: keptLessons };
+				});
+				(this.lessonsDs as any).reload();
+			}
+		});
+
+		// Lessons grid
+		$(this.lessonsGridRef).dxDataGrid({
+			dataSource: this.lessonsDs,
+			showBorders: true,
+			height: 360,
+			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true },
+			columns: [
+				{ dataField: 'Title', caption: 'Lesson Title', validationRules: [{ type: 'required' }] },
+				{
+					dataField: 'ModuleId',
+					caption: 'Module',
+					lookup: {
+						dataSource: this.state.modules,
+						valueExpr: 'Id',
+						displayExpr: 'Title'
+					},
+					width: 240,
+					validationRules: [{ type: 'required' }],
+					setCellValue(newData, value) {
+						newData.ModuleId = value == null ? null : Number(value);
+					}
+				},
+				{ dataField: 'Order0', caption: 'Order', dataType: 'number', width: 90 },
+				{
+					dataField: 'ContentType',
+					caption: 'Type',
+					width: 120,
+					lookup: { dataSource: ['PDF', 'PPT', 'Video', 'Audio', 'Link', 'HTML', 'Quiz'] }
+				},
+				{ dataField: 'ContentUrl', caption: 'Content URL', width: 280, visible: true },
+				{ dataField: 'EstimatedMinutes', caption: 'Est. (min)', dataType: 'number', width: 110 }
+			],
+			onEditorPreparing: (e: any) => {
+				// Toggle which fields are meaningful based on ContentType (optional, simple UX)
+				if (e.parentType === 'dataRow' && e.dataField === 'ContentUrl') {
+					const ct = (e.row && e.row.data && e.row.data.ContentType) || 'HTML';
+					e.editorOptions.disabled = ct === 'HTML' || ct === 'Quiz';
+				}
+				if (e.parentType === 'dataRow' && e.dataField === 'CourseId') {
+					e.editorName = 'dxSelectBox';
+					e.editorOptions = e.editorOptions || {};
+					e.editorOptions.dataSource = this.state.courses;
+					e.editorOptions.valueExpr = 'Id';
+					e.editorOptions.displayExpr = 'Title';
+					e.editorOptions.searchEnabled = true;
+					e.editorOptions.openFieldClick = true;
+				}
+			}
+		});
+	}
+
+	private commitAllEdits = async () => {
+		const trySave = async (ref: HTMLDivElement) => {
+			const inst: any = $(ref).dxDataGrid('instance');
+			if (inst && typeof inst.saveEditData === 'function') {
+				const r = inst.saveEditData();
+				if (r && typeof r.then === 'function') await r;
+			}
+		};
+		await trySave(this.coursesGridRef);
+		await trySave(this.modulesGridRef);
+		await trySave(this.lessonsGridRef);
+	};
+
+	private onSave = async () => {
 		const sp = getSP(this.props.context);
 
 		try {
-			const id = this.props.courseId;
-			if (!id) {
-				this.setState({ loading: false, error: 'No courseId configured' });
-				return;
-			}
+			await this.commitAllEdits();
 
-			// Course
-			const courseItem = await sp.web.lists.getByTitle('Courses').items.select('Id', 'Title', 'Description', 'ThumbnailUrl').filter(`Id eq ${id}`).top(1)();
-			if (!courseItem.length) {
-				this.setState({ loading: false, error: 'Course not found' });
-				return;
+			const coursesList = sp.web.lists.getByTitle('Courses');
+			const addCoursePromises: Promise<any>[] = [];
+			const courseTempToReal: Record<number, number> = {};
+
+			for (const c of this.state.newCourses) {
+				addCoursePromises.push(
+					coursesList.items
+						.add({
+							Title: c.Title,
+							Code: c.Code,
+							Description: c.Description,
+							DurationMinutes: c.DurationMinutes,
+							Level: c.Level,
+							Status: c.Status,
+							ThumbnailUrl: c.ThumbnailUrl
+						})
+						.then((res) => {
+							courseTempToReal[(c.Id as any) as number] = res.data.Id;
+						})
+				);
 			}
-			const course = courseItem[0];
-			this.setState({
-				course: { Id: course.Id, Title: course.Title, Description: course.Description, ThumbnailUrl: course.ThumbnailUrl }
+			await Promise.all(addCoursePromises);
+
+			const stagedNewModules = this.state.newModules.map((m) => {
+				const isTempParent = (m.CourseId as any) < 0;
+				return isTempParent ? { ...m, CourseId: courseTempToReal[(m.CourseId as any) as number] } : m;
 			});
 
-			const modsRaw = await sp.web.lists
-				.getByTitle('Modules')
-				.items.select('Id', 'Title', 'Order0', 'CourseId')
-				.filter(`CourseId eq ${id}`)
-				.orderBy('Order0', true)
-				.orderBy('Id', true)
-				.top(5000)();
+			const modulesList = sp.web.lists.getByTitle('Modules');
+			const addModulePromises: Promise<any>[] = [];
+			const moduleTempToReal: Record<number, number> = {};
 
-			const modules: Module[] = modsRaw.map((m: any) => ({
-				Id: m.Id,
-				Title: m.Title,
-				Order0: m.Order0,
-				CourseId: id
-			}));
-			this.setState({ modules });
+			for (const m of stagedNewModules) {
+				addModulePromises.push(
+					modulesList.items
+						.add({
+							Title: m.Title,
+							Order0: m.Order0,
+							Description: m.Description,
+							CourseId: m.CourseId
+						})
+						.then((res) => {
+							moduleTempToReal[(m.Id as any) as number] = res.data.Id;
+						})
+				);
+			}
+			await Promise.all(addModulePromises);
 
-			let lessonsBy: { [k: number]: Lesson[] } = {};
-			if (modules.length) {
-				const ids: number[] = modules.map((m) => m.Id);
+			const stagedNewLessons = this.state.newLessons.map((l) => {
+				const isTempParent = (l.ModuleId as any) < 0;
+				return isTempParent ? { ...l, ModuleId: moduleTempToReal[(l.ModuleId as any) as number] } : l;
+			});
 
-				const lessonsRaw = await sp.web.lists
-					.getByTitle('Lessons')
-					.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'Module/Id', 'Module/Title')
-					.expand('Module')
-					.orderBy('ModuleId', true)
-					.orderBy('Order0', true)
-					.orderBy('Id', true)
-					.top(5000)();
+			const lessonsList = sp.web.lists.getByTitle('Lessons');
+			const addLessonPromises: Promise<any>[] = [];
 
-				(lessonsRaw || []).forEach((l: Lesson) => {
-					const modId = l.Module ? l.Module.Id : l.ModuleId;
-
-					if (ids.indexOf(modId) === -1) return;
-					(lessonsBy[modId] = lessonsBy[modId] || []).push({
-						Id: l.Id,
+			for (const l of stagedNewLessons) {
+				addLessonPromises.push(
+					lessonsList.items.add({
 						Title: l.Title,
 						Order0: l.Order0,
-						ContentType: l.ContentType,
+						ContentTypeChoice: l.ContentType,
 						ContentUrl: l.ContentUrl,
 						HtmlContent: l.HtmlContent,
 						QuizJson: l.QuizJson,
 						EstimatedMinutes: l.EstimatedMinutes,
-						ModuleId: modId
-					} as Lesson);
-				});
+						ModuleId: l.ModuleId
+					})
+				);
+			}
+			await Promise.all(addLessonPromises);
+
+			const updCoursePromises: Promise<any>[] = [];
+			for (const c of this.state.updCourses) {
+				if (!c.Id || c.Id < 1) continue;
+				updCoursePromises.push(
+					coursesList.items.getById(c.Id).update({
+						Title: c.Title,
+						Code: c.Code,
+						Description: c.Description,
+						DurationMinutes: c.DurationMinutes,
+						Level: c.Level,
+						Status: c.Status,
+						ThumbnailUrl: c.ThumbnailUrl
+					})
+				);
 			}
 
-			const firstModuleId = modules.length ? modules[0].Id : undefined;
-			const firstLessonId = firstModuleId && lessonsBy[firstModuleId] && lessonsBy[firstModuleId][0] ? lessonsBy[firstModuleId][0].Id : undefined;
+			const updModulePromises: Promise<any>[] = [];
+			for (const m0 of this.state.updModules) {
+				if (!m0.Id || m0.Id < 1) continue;
+				const m = (m0.CourseId as any) < 0 ? { ...m0, CourseId: courseTempToReal[(m0.CourseId as any) as number] } : m0;
 
+				updModulePromises.push(
+					modulesList.items.getById(m.Id!).update({
+						Title: m.Title,
+						Order0: m.Order0,
+						Description: m.Description,
+						CourseId: m.CourseId
+					})
+				);
+			}
+
+			const updLessonPromises: Promise<any>[] = [];
+			for (const l0 of this.state.updLessons) {
+				if (!l0.Id || l0.Id < 1) continue;
+				const l = (l0.ModuleId as any) < 0 ? { ...l0, ModuleId: moduleTempToReal[(l0.ModuleId as any) as number] } : l0;
+
+				updLessonPromises.push(
+					lessonsList.items.getById(l.Id!).update({
+						Title: l.Title,
+						Order0: l.Order0,
+						ContentTypeChoice: l.ContentType,
+						ContentUrl: l.ContentUrl,
+						HtmlContent: l.HtmlContent,
+						QuizJson: l.QuizJson,
+						EstimatedMinutes: l.EstimatedMinutes,
+						ModuleId: l.ModuleId
+					})
+				);
+			}
+
+			await Promise.all([...updCoursePromises, ...updModulePromises, ...updLessonPromises]);
+
+			const delLessonPromises = this.state.delLessons.map((id) => lessonsList.items.getById(id).delete());
+			await Promise.all(delLessonPromises);
+
+			const delModulePromises = this.state.delModules.map((id) => modulesList.items.getById(id).delete());
+			await Promise.all(delModulePromises);
+
+			const delCoursePromises = this.state.delCourses.map((id) => coursesList.items.getById(id).delete());
+			await Promise.all(delCoursePromises);
+
+			await this.loadAll();
+			const mg: any = $(this.modulesGridRef).dxDataGrid('instance');
+			if (mg) {
+				mg.columnOption('CourseId', 'lookup.dataSource', this.state.courses);
+				mg.repaint();
+			}
+			const lg: any = $(this.lessonsGridRef).dxDataGrid('instance');
+			if (lg) {
+				lg.columnOption('ModuleId', 'lookup.dataSource', this.state.modules);
+				lg.repaint();
+			}
+
+			// clear diffs
 			this.setState({
-				lessonsByModule: lessonsBy,
-				activeModuleId: firstModuleId,
-				activeLessonId: firstLessonId,
-				loading: false
+				newCourses: [],
+				updCourses: [],
+				delCourses: [],
+				newModules: [],
+				updModules: [],
+				delModules: [],
+				newLessons: [],
+				updLessons: [],
+				delLessons: []
 			});
-		} catch (e) {
-			this.setState({ loading: false, error: e && (e as any).message ? (e as any).message : String(e) });
-		}
-	}
 
-	private renderLesson(l: Lesson) {
-		if (l.ContentType === 'HTML') return <div dangerouslySetInnerHTML={{ __html: l.HtmlContent || '' }} />;
-		if (l.ContentType === 'PDF' || l.ContentType === 'PPT' || l.ContentType === 'Link') return <iframe src={l.ContentUrl} style={{ width: '100%', height: 600 }} />;
-		if (l.ContentType === 'Video') return <video src={l.ContentUrl} controls style={{ width: '100%' }} />;
-		if (l.ContentType === 'Audio') return <audio src={l.ContentUrl} controls />;
-		if (l.ContentType === 'Quiz') return <div>Quiz (todo)</div>;
-		return <div>Unsupported content.</div>;
-	}
+			alert('Saved successfully.');
+		} catch (e) {
+			alert('Save failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
+		}
+	};
+
+	private refreshLookups = () => {
+		const mg: DevExpress.ui.dxDataGrid = $(this.modulesGridRef).dxDataGrid('instance');
+		if (mg) {
+			mg.columnOption('CourseId', 'lookup.dataSource', this.state.courses);
+			mg.repaint();
+		}
+
+		const lg: DevExpress.ui.dxDataGrid = $(this.lessonsGridRef).dxDataGrid('instance');
+		if (lg) {
+			lg.columnOption('ModuleId', 'lookup.dataSource', this.state.modules);
+			lg.repaint();
+		}
+	};
 }
