@@ -1,0 +1,56 @@
+// utils.ts
+
+export type FieldUrlValue = { Url: string; Description?: string };
+
+/**
+ * Normalize a value into a SharePoint FieldUrlValue ({ Url, Description }).
+ * - Accepts:
+ *   • string: "https://.../file.pdf"
+ *   • string with desc: "https://.../file.pdf, My PDF"  or  "https://.../file.pdf | My PDF"
+ *   • markdown: "[My PDF](https://.../file.pdf)"
+ *   • object from SP: { Url: "...", Description: "..." } (any casing)
+ * - Returns null when empty → clears the Hyperlink/Picture field.
+ */
+export function toFieldUrlValue(
+  input: any,
+  opts?: { defaultDescription?: string }
+): FieldUrlValue | null {
+  const defDesc = (opts && opts.defaultDescription) || undefined;
+
+  // 1) Null/empty => clear field
+  if (input == null) return null;
+  if (typeof input === 'string' && input.trim() === '') return null;
+
+  // 2) Already an object => normalize casing & trim
+  if (typeof input === 'object') {
+    const url = String((input.Url ?? input.url ?? '')).trim();
+    const description = String((input.Description ?? input.description ?? '') || '').trim();
+    if (!url) return null;
+    return { Url: url, Description: description || defDesc || url };
+  }
+
+  // 3) String parsing
+  let s = String(input).trim();
+  if (!s) return null;
+
+  // 3a) Markdown: [text](url)
+  const md = s.match(/^\s*\[([^\]]+)\]\(([^)]+)\)\s*$/);
+  if (md) {
+    const url = md[2].trim();
+    const description = md[1].trim();
+    if (!url) return null;
+    return { Url: url, Description: description || defDesc || url };
+  }
+
+  // 3b) "url, desc" or "url | desc"
+  const split = s.split(/\s*[|,]\s(.*)/); // split only on first "," or " | "
+  if (split && split.length > 1) {
+    const url = split[0].trim();
+    const description = split[1].trim();
+    if (!url) return null;
+    return { Url: url, Description: description || defDesc || url };
+  }
+
+  // 3c) Plain URL string
+  return { Url: s, Description: defDesc || s };
+}
