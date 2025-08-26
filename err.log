@@ -1,27 +1,17 @@
-private renderNavBar = () => {
-  var modules = this.state.modules;
-  var lessonsByModule = this.state.lessonsByModule;
+private autoAdvance() {
   var activeModuleId = this.state.activeModuleId;
   var activeLessonId = this.state.activeLessonId;
-  if (!activeModuleId || !activeLessonId) return null;
+  var lessonsByModule = this.state.lessonsByModule;
+  if (!activeModuleId || !activeLessonId) return;
 
   var list = lessonsByModule[activeModuleId] || [];
   var idx = -1;
   for (var i = 0; i < list.length; i++) { if (list[i].Id === activeLessonId) { idx = i; break; } }
-  var prev = idx > 0 ? list[idx - 1] : null;
   var next = (idx >= 0 && idx < list.length - 1) ? list[idx + 1] : null;
 
-  var pct = list.length ? Math.round(((idx + 1) / list.length) * 100) : 0;
-  var go = (l?: Lesson) => { if (l) this.setState({ activeLessonId: l.Id }); };
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-      <button disabled={!prev} onClick={function(){ go(prev as any); }}>◀ Prev</button>
-      <div style={{ flex: 1, height: 6, background: '#eee', borderRadius: 3 }}>
-        <div style={{ width: (pct + '%'), height: 6, background: '#0078d4', borderRadius: 3 }} />
-      </div>
-      <span style={{ width: 38, textAlign: 'right', fontSize: 12 }}>{pct}%</span>
-      <button disabled={!next} onClick={function(){ go(next as any); }}>Next ▶</button>
-    </div>
-  );
-};
+  if (next) {
+    this.setState({ activeLessonId: next.Id });
+  } else {
+    this.jumpToNextUnlockedModule();
+  }
+}
