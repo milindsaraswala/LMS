@@ -1,31 +1,16 @@
-private submitQuiz = async (lessonId: number, qModel: any) => {
-  var qs = this.getQuizState(lessonId);
-  var points = 0;
-  var max = 0;
+private setQuizState = (lessonId: number, patch: Partial<QuizState>) => {
+  this.setState(function(s) {
+    var next: any = {};
+    var k: string;
+    for (k in s.quizByLesson) if (Object.prototype.hasOwnProperty.call(s.quizByLesson, k)) next[k] = s.quizByLesson[k];
 
-  (qModel.questions || []).forEach(function(q: any) {
-    var correct = (q.correctOptionIds || []).slice().sort();
-    var chosen  = (qs.answers[q.id] || []).slice().sort();
-    var qPoints = Number(q.points) > 0 ? Number(q.points) : 1;
-    max += qPoints;
-
-    var ok = correct.length === chosen.length;
-    if (ok) {
-      for (var i = 0; i < correct.length; i++) {
-        if (correct[i] !== chosen[i]) { ok = false; break; }
-      }
-    }
-    if (ok) points += qPoints;
+    var base: QuizState = next[lessonId] || { answers: {}, submitted: false };
+    var merged: QuizState = {
+      answers: (patch.answers ? patch.answers : base.answers),
+      submitted: (typeof patch.submitted === 'boolean' ? patch.submitted : base.submitted),
+      score: (typeof patch.score !== 'undefined' ? patch.score : base.score)
+    };
+    next[lessonId] = merged;
+    return { quizByLesson: next } as any;
   });
-
-  var percent = max ? Math.round((points / max) * 100) : 0;
-  var passed = percent >= 70;
-  var result = { points: points, max: max, percent: percent, passed: passed };
-
-  // ES5-safe computed key
-  var patchQuiz: any = {}; patchQuiz[lessonId] = result;
-  await this.saveProgress({ quiz: patchQuiz });
-  this.setQuizState(lessonId, { submitted: true, score: result });
-
-  if (passed) await this.saveProgress({ completed: [lessonId] });
 };
