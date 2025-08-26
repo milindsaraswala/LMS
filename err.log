@@ -1,22 +1,31 @@
-private toggleAnswer = (lessonId: number, q: any, optId: string, checked: boolean) => {
+private submitQuiz = async (lessonId: number, qModel: any) => {
   var qs = this.getQuizState(lessonId);
-  var current = qs.answers[q.id] ? qs.answers[q.id].slice() : [];
+  var points = 0;
+  var max = 0;
 
-  if (q.type === 'single' || q.type === 'boolean') {
-    current = checked ? [optId] : [];
-  } else {
-    var idx = current.indexOf(optId);
-    if (checked) {
-      if (idx === -1) current.push(optId);
-    } else {
-      if (idx !== -1) current.splice(idx, 1);
+  (qModel.questions || []).forEach(function(q: any) {
+    var correct = (q.correctOptionIds || []).slice().sort();
+    var chosen  = (qs.answers[q.id] || []).slice().sort();
+    var qPoints = Number(q.points) > 0 ? Number(q.points) : 1;
+    max += qPoints;
+
+    var ok = correct.length === chosen.length;
+    if (ok) {
+      for (var i = 0; i < correct.length; i++) {
+        if (correct[i] !== chosen[i]) { ok = false; break; }
+      }
     }
-  }
+    if (ok) points += qPoints;
+  });
 
-  var nextAnswers: any = {};
-  var k: string;
-  for (k in qs.answers) if (Object.prototype.hasOwnProperty.call(qs.answers, k)) nextAnswers[k] = qs.answers[k];
-  nextAnswers[q.id] = current;
+  var percent = max ? Math.round((points / max) * 100) : 0;
+  var passed = percent >= 70;
+  var result = { points: points, max: max, percent: percent, passed: passed };
 
-  this.setQuizState(lessonId, { answers: nextAnswers });
+  // ES5-safe computed key
+  var patchQuiz: any = {}; patchQuiz[lessonId] = result;
+  await this.saveProgress({ quiz: patchQuiz });
+  this.setQuizState(lessonId, { submitted: true, score: result });
+
+  if (passed) await this.saveProgress({ completed: [lessonId] });
 };
