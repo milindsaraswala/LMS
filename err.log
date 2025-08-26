@@ -1,0 +1,11 @@
+if (bookmark) {
+  for (var i = 0; i < moduleIds.length; i++) {
+    var mid = moduleIds[i];
+    var list = byMod[mid] || [];
+    var j, hit = null;
+    for (j = 0; j < list.length; j++) {
+      if (list[j].Id === bookmark) { hit = list[j]; break; }
+    }
+    if (hit) { startModId = mid; startLessonId = hit.Id; break; }
+  }
+}
