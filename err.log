@@ -1,35 +1,21 @@
-// Returns true iff all previous lessons in the same module are completed
-private isLessonUnlockedInModule(moduleId: number, lessonId: number): boolean {
-  var list = this.state.lessonsByModule[moduleId] || [];
-  // find lesson index without .findIndex
-  var idx = -1;
-  for (var i = 0; i < list.length; i++) { if (list[i].Id === lessonId) { idx = i; break; } }
-  if (idx <= 0) return true; // first lesson (or not found) -> treat as unlocked for first
-
-  // every earlier lesson must be completed
-  for (var j = 0; j < idx; j++) {
-    if (!this.isLessonCompleted(list[j].Id)) return false;
+private isPreview(): boolean {
+  // from prop
+  var p: any = (this.props as any).preview;
+  if (typeof p === 'string') {
+    var s = p.toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes') return true;
+    if (s === 'false' || s === '0' || s === 'no') return false;
   }
-  return true;
-}
+  if (typeof p === 'boolean') return p === true;
 
-// Old “module unlock” stays, but remove .findIndex usage
-private isModuleUnlocked(module: Module): boolean {
-  var modules = this.state.modules;
-  var lessonsByModule = this.state.lessonsByModule;
-
-  // get module position
-  var index = -1;
-  for (var i = 0; i < modules.length; i++) { if (modules[i].Id === module.Id) { index = i; break; } }
-  if (index <= 0) return true; // first module is unlocked
-
-  // all lessons in earlier modules must be completed
-  for (var m = 0; m < index; m++) {
-    var pm = modules[m];
-    var lessons = lessonsByModule[pm.Id] || [];
-    for (var k = 0; k < lessons.length; k++) {
-      if (!this.isLessonCompleted(lessons[k].Id)) return false;
+  // fallback: ?preview=1|true
+  var qs = (window.location.search || '').replace(/^\?/, '').split('&');
+  for (var i = 0; i < qs.length; i++) {
+    var kv = qs[i].split('=');
+    if (decodeURIComponent(kv[0]) === 'preview') {
+      var v = kv.length > 1 ? decodeURIComponent(kv[1]).toLowerCase() : '';
+      return v === '1' || v === 'true' || v === 'yes';
     }
   }
-  return true;
+  return false;
 }
