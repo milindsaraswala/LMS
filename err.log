@@ -1,0 +1,134 @@
+import HtmlEditor from 'devExtreme/ui/html_editor';
+import * as React from 'react';
+import { getSP } from '../common/pnp';
+import { sanitizeHtml } from '../common/utils';
+
+type EditorProps = { context: any; lessonId: number; returnUrl?: string; onSaved?: () => void };
+type EditorState = { loading: boolean; title?: string; html?: string; error?: string };
+
+require('dompurify');
+
+export default class LessonHtmlEditor extends React.Component<EditorProps, EditorState> {
+	private hostRef: HTMLDivElement = null as any;
+	private inst: any;
+
+	constructor(p: EditorProps) {
+		super(p);
+		this.state = { loading: true };
+	}
+
+	public async componentDidMount() {
+		try {
+			const sp = getSP(this.props.context);
+			const it = await sp.web.lists.getByTitle('Lessons').items.select('Id', 'Title', 'HtmlContent').filter(`Id eq ${this.props.lessonId}`).top(1)();
+			if (!it.length) {
+				this.setState({ loading: false, error: 'Lesson not found' });
+				return;
+			}
+
+			this.setState({ loading: false, title: it[0].Title, html: it[0].HtmlContent }, () => this.initEditor());
+		} catch (e) {
+			this.setState({ loading: false, error: e && (e as any).message ? (e as any).message : String(e) });
+		}
+	}
+
+	public componentWillUnmount() {
+		if (this.inst && typeof this.inst.dispose === 'function') {
+			try {
+				this.inst.dispose();
+			} catch (_) {
+				/*ignore */
+			}
+		}
+		this.inst = null;
+	}
+
+	public render() {
+		if (this.state.loading) return <div>Loading…</div>;
+		if (this.state.error) return <div style={{ color: 'red' }}>Error: {this.state.error}</div>;
+
+		return (
+			<div style={{ padding: 12 }}>
+				<h3>Edit Lesson HTML</h3>
+				<div style={{ marginBottom: 8, opacity: 0.8 }}>{this.state.title}</div>
+				<div ref={(el) => (this.hostRef = el as any)} />
+				<div style={{ marginTop: 12 }}>
+					<button onClick={this.onSave}>Save & Return</button>
+					<button style={{ marginLeft: 8 }} onClick={() => (this.props.returnUrl ? (window.location.href = this.props.returnUrl) : history.back())}>
+						Cancel
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	private initEditor() {
+		this.inst = new HtmlEditor(this.hostRef, {
+			value: this.state.html || '',
+			height: 480,
+			toolbar: {
+				items: [
+					'undo',
+					'redo',
+					'separator',
+					{
+						name: 'size',
+						acceptedValues: ['8pt', '10pt', '12pt', '14pt', '18pt', '24pt', '36pt']
+					},
+					{
+						name: 'font',
+						acceptedValues: ['Arial', 'Georgia', 'Tahoma', 'Times New Roman', 'Verdana']
+					},
+					'bold',
+					'italic',
+					'underline',
+					'strike',
+					'separator',
+					'alignLeft',
+					'alignCenter',
+					'alignRight',
+					'alignJustify',
+					'separator',
+					'orderedList',
+					'bulletList',
+					'separator',
+					'link',
+					'image',
+					'codeBlock',
+					'blockquote',
+					'separator',
+					'clear'
+				]
+			},
+			mediaResizing: { enabled: true },
+			onValueChanged: (e) => {
+				this.setState({ html: e.value });
+			}
+		});
+	}
+
+	private onSave = async () => {
+		try {
+			const sp = getSP(this.props.context);
+			const clean = sanitizeHtml(this.state.html);
+			await sp.web.lists.getByTitle('Lessons').items.getById(this.props.lessonId).update({
+				HtmlContent: clean
+			});
+
+			if (this.props.onSaved) {
+				this.props.onSaved();
+				return;
+			}
+			if (this.props.returnUrl) {
+				window.location.href = this.props.returnUrl;
+			} else if (window.opener) {
+				window.opener.postMessage({ type: 'lessonHtmlSaved', id: this.props.lessonId }, '*');
+				window.close();
+			} else {
+				history.back();
+			}
+		} catch (e) {
+			alert('Save failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
+		}
+	};
+}
