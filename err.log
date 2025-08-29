@@ -1,145 +1,77 @@
-private openUploadForLesson(lessonId: number) {
-  if (this.isUploading) {
-    alert('An upload is already in progress. Please wait.');
-    return;
-  }
-  this.pendingUploadLessonId = lessonId;
-  if (this.hiddenFileInputRef) {
-    this.hiddenFileInputRef.value = ''; // clear previous selection
-    this.hiddenFileInputRef.click();
-  }
-}
-
-private onFilePicked = async (ev: React.ChangeEvent<HTMLInputElement>) => {
-  const files = ev.target && ev.target.files ? ev.target.files : null;
-  if (!files || files.length === 0) return;
-
-  const file = files[0];
-  const lessonId = this.pendingUploadLessonId;
-  this.pendingUploadLessonId = null;
-
-  if (!lessonId) return;
-
-  try {
-    this.isUploading = true;
-    const uploaded = await this.uploadToLibrary(file, lessonId);
-
-    // Update lesson ContentUrl (and maybe type) in-local-state
-    this.setState((s) => {
-      const idx = findIndexById(s.lessons, lessonId);
-      if (idx < 0) return null;
-
-      const updated = Object.assign({}, s.lessons[idx]);
-      updated.ContentUrl = uploaded.absoluteUrl;
-
-      if (AUTO_SET_TYPE_FROM_EXTENSION) {
-        const kind = this.kindFromFilename(file.name);
-        if (kind) updated.ContentTypeChoice = kind as any;
-      }
-
-      const lessons = s.lessons.slice();
-      lessons[idx] = updated;
-
-      // mark as updated (so Save will persist)
-      const updLessons = upsertById(s.updLessons, updated);
-      return { lessons, updLessons } as any;
-    }, () => {
-      // Refresh the grid cell UI
-      const lg: any = $(this.lessonsGridRef).dxDataGrid('instance');
-      if (lg) lg.refresh();
-      DevExpress.ui.notify('File uploaded and lesson updated. Click "Save changes" to persist.', 'success', 2000);
-    });
-  } catch (e) {
-    alert('Upload failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
-  } finally {
-    this.isUploading = false;
-  }
-};
-
-private kindFromFilename(name: string): string | null {
-  const dot = name.lastIndexOf('.');
-  if (dot < 0) return null;
-  const ext = name.substring(dot).toLowerCase();
-  return EXT_TO_KIND[ext] || null;
-}
-
 private async uploadToLibrary(file: File, lessonId: number): Promise<{ serverRelativeUrl: string; absoluteUrl: string; }> {
   const sp = getSP(this.props.context);
 
-  // Resolve a folder path like "/Shared Documents" or "/Shared Documents/Courses/<CourseId>/Modules/<ModuleId>"
-  const folderServerRel = await this.resolveTargetFolder(lessonId);
+  // Web info to assemble server-relative + absolute URLs
+  const webInfo: any = await sp.web.select('ServerRelativeUrl', 'Url')();
+  const webServerRel: string = webInfo.ServerRelativeUrl || '/';
+  const webAbs: string = (webInfo.Url || '').replace(/\/+$/, '');
 
-  // Ensure unique name (optional). Here we just reuse; pass true (overwrite) or false (no overwrite)
+  // Build the base library server-relative path.
+  // If COURSE_ASSETS_LIB starts with '/', assume it's already server-relative; otherwise join to web root.
+  const baseLibSrvRel =
+    COURSE_ASSETS_LIB.charAt(0) === '/'
+      ? COURSE_ASSETS_LIB
+      : (webServerRel.replace(/\/+$/, '') + '/' + COURSE_ASSETS_LIB).replace(/\/+/g, '/');
+
+  // Resolve nested folder path (ensure it exists)
+  const targetFolderSrvRel = await this.resolveTargetFolderServerRelative(baseLibSrvRel, lessonId);
+
   const overwrite = true;
+  const folder = sp.web.getFolderByServerRelativePath(targetFolderSrvRel);
+  const addRes = await folder.files.addUsingPath(file.name, file, { Overwrite: overwrite }); // works in pnpjs v3; for v2 use folder.files.add
 
-  // Upload
-  const folder = sp.web.getFolderByServerRelativeUrl(folderServerRel);
-  const addRes = await folder.files.add(file.name, file, overwrite);
-
-  // You can also get a link from the item after upload if needed
+  // Get server-relative of the uploaded file
   const fileItem = await addRes.file.getItem();
-  const fileProps: any = await fileItem.select('FileRef')(); // FileRef is server-relative URL
-
-  const serverRelativeUrl = fileProps && fileProps.FileRef ? fileProps.FileRef : folderServerRel + '/' + file.name;
-  const absoluteUrl = location.origin + serverRelativeUrl;
+  const fileProps: any = await fileItem.select('FileRef')();
+  const serverRelativeUrl: string = (fileProps && fileProps.FileRef) ? fileProps.FileRef : (targetFolderSrvRel + '/' + file.name).replace(/\/+/g, '/');
+  const absoluteUrl: string = webAbs + serverRelativeUrl;
 
   return { serverRelativeUrl, absoluteUrl };
 }
 
-// Build a folder path and ensure it exists
-private async resolveTargetFolder(lessonId: number): Promise<string> {
-  const sp = getSP(this.props.context);
-
-  // base library
-  let base = COURSE_ASSETS_LIB; // e.g. "/Shared Documents"
-  if (base.charAt(0) !== '/') base = '/' + base;
-
+private async resolveTargetFolderServerRelative(baseLibSrvRel: string, lessonId: number): Promise<string> {
+  // If you don’t want nesting: just ensure the doc lib exists and return it.
   if (!NEST_BY_COURSE_AND_MODULE) {
-    // ensure base exists (it will) and return
-    return base;
+    await this.ensureFolderPathServerRelative(baseLibSrvRel);
+    return baseLibSrvRel;
   }
 
-  // Find module & course for this lesson to build nested path
+  // Build nested path CourseAssets/Courses/<courseId>/Modules/<moduleId>
   const lesson = this.state.lessons.find((l) => l.Id === lessonId);
-  if (!lesson) return base;
+  if (!lesson) {
+    await this.ensureFolderPathServerRelative(baseLibSrvRel);
+    return baseLibSrvRel;
+  }
 
   const mod = this.state.modules.find((m) => m.Id === lesson.ModuleId);
-  // Try to locate the course
-  let courseIdForModule: number | null = null;
-  if (mod) {
-    courseIdForModule = mod.CourseId != null ? Number(mod.CourseId) : null;
-  }
+  const courseId = mod && typeof mod.CourseId === 'number' ? mod.CourseId : null;
 
-  const parts: string[] = [base, 'Courses'];
-  if (courseIdForModule) parts.push(String(courseIdForModule));
+  const parts: string[] = [baseLibSrvRel, 'Courses'];
+  if (courseId) parts.push(String(courseId));
   if (mod) parts.push('Modules', String(mod.Id));
 
-  // Create/ensure the nested folder path
-  const fullPath = parts.join('/').replace(/\/+/g, '/');
-  await this.ensureFolderPath(fullPath);
-  return fullPath;
+  const full = parts.join('/').replace(/\/+/g, '/');
+  await this.ensureFolderPathServerRelative(full);
+  return full;
 }
 
-// Ensure a nested folder path exists under the same web
-private async ensureFolderPath(serverRelativePath: string): Promise<void> {
+private async ensureFolderPathServerRelative(serverRelativePath: string): Promise<void> {
   const sp = getSP(this.props.context);
-  // Split and iteratively ensure
-  const parts = serverRelativePath.replace(/^\/+/, '').split('/');
-  // First segment is library root ("Shared Documents")
-  let current = '/' + parts.shift();
+  // Split into segments starting from the library root
+  const path = serverRelativePath.replace(/^\/+/, '');
+  const segments = path.split('/');
+  if (segments.length === 0) return;
 
-  // Walk the rest
-  while (parts.length) {
-    const next = parts.shift();
-    if (!next) continue;
-
-    const candidate = current + '/' + next;
+  // First segment might be 'sites', handle that by rebuilding as we go
+  let current = '/' + segments[0];
+  for (let i = 1; i < segments.length; i++) {
+    current = (current + '/' + segments[i]).replace(/\/+/g, '/');
     try {
-      await sp.web.getFolderByServerRelativeUrl(candidate).select('ServerRelativeUrl')();
+      // exists?
+      await sp.web.getFolderByServerRelativePath(current).select('ServerRelativeUrl')();
     } catch (_) {
-      // Not found -> create
-      await sp.web.folders.addUsingPath(candidate);
+      // create
+      await sp.web.folders.addUsingPath(current);
     }
-    current = candidate;
   }
 }
