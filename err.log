@@ -1,89 +1,87 @@
-// 1) Resolve the library root folder (by Title) and return its folder object + server-relative path
+// ---- PATH + FOLDER HELPERS ----
+
+// Get the library root folder object by server-relative path (works even when baseUrl is root web)
 private async getCourseAssetsRoot() {
   const sp = getSP(this.props.context);
-  // Get RootFolder to avoid path guessing
-  const lib = await sp.web.lists.getByTitle(COURSE_ASSETS_LIB_TITLE).rootFolder.select('ServerRelativeUrl')();
-  const libSrvRel: string = lib.ServerRelativeUrl; // e.g. /sites/lms/CourseAssets
-  const rootFolder = sp.web.getFolderByServerRelativePath(libSrvRel);
+  // Throws 404 immediately if library path is wrong
+  const rootFolder = sp.web.getFolderByServerRelativePath(COURSE_ASSETS_LIB_SERVER_REL);
+  // Touch it to ensure it exists and fetch the canonical path
+  const meta = await rootFolder.select('ServerRelativeUrl')();
+  const libSrvRel: string = meta.ServerRelativeUrl; // e.g. "/lms/CourseAssets"
   return { rootFolder, libSrvRel };
 }
 
-// 2) Ensure nested folder path under the library: pass an array of segments (no leading /)
+// Create child folders **under the given Folder** (each segment is just a name, NO leading slash)
 private async ensureNestedFolder(parent: any, segments: string[]): Promise<any> {
-  // parent is a Folder instance (e.g., returned by getFolderByServerRelativePath)
   let current = parent;
-
   for (let i = 0; i < segments.length; i++) {
     const seg = (segments[i] || '').trim();
     if (!seg) continue;
-
-    // Try to get the child folder; if it fails (404), create it under "current"
     try {
-      // If exists, just rebind current to that folder
       const child = current.folders.getByName(seg);
       await child.select('ServerRelativeUrl')();
       current = child;
     } catch {
-      // Create relative to the *current* folder (NO leading slash here)
-      await current.folders.addUsingPath(seg);
+      await current.folders.addUsingPath(seg);      // <- child name only
       current = current.folders.getByName(seg);
     }
   }
-
-  return current; // final folder
+  return current;
 }
 
-// 3) Build your desired folder structure for a lesson (Course/Module nesting is optional)
 private buildLessonFolderSegments(lessonId: number): string[] {
   if (!NEST_BY_COURSE_AND_MODULE) return [];
-  const lesson = this.state.lessons.find(l => l.Id === lessonId);
+  const lesson = this.state.lessons.find((l) => l.Id === lessonId);
   if (!lesson) return [];
-
-  const mod = this.state.modules.find(m => m.Id === lesson.ModuleId);
+  const mod = this.state.modules.find((m) => m.Id === lesson.ModuleId);
   const courseId = mod && typeof mod.CourseId === 'number' ? mod.CourseId : null;
 
   const segs: string[] = ['Courses'];
-  if (courseId) segs.push(String(courseId));
+  if (courseId != null) segs.push(String(courseId));
   if (mod) segs.push('Modules', String(mod.Id));
   return segs;
 }
 
-// 4) Upload API — returns absolute + server-relative URLs
+private sanitizeFileName(name: string): string {
+  // Keep it simple: strip characters SharePoint dislikes in folder/file names
+  return (name || '').replace(/[<>:"|?*\\/#{}%~&]/g, '_').replace(/\s+/g, ' ').trim();
+}
+// ---- UPLOAD ----
 private async uploadToLibrary(file: File, lessonId: number): Promise<{ serverRelativeUrl: string; absoluteUrl: string }> {
   const sp = getSP(this.props.context);
 
-  // Resolve web absolute URL for later
+  // For absolute URL
   const webInfo: any = await sp.web.select('Url')();
   const webAbs: string = (webInfo.Url || '').replace(/\/+$/, '');
 
-  // Get library root folder
   const { rootFolder, libSrvRel } = await this.getCourseAssetsRoot();
 
-  // Ensure nested folders (relative to the library root)
+  // Ensure target folder under /lms/CourseAssets
   const segs = this.buildLessonFolderSegments(lessonId);
   const targetFolder = await this.ensureNestedFolder(rootFolder, segs);
 
-  // Upload the file into the target folder (relative file name only)
-  // PnPjs v3:
+  const safeName = this.sanitizeFileName(file.name);
+
+  // PnPjs v3 (works in v2 with slight polyfills; we also provide a fallback below)
   if (typeof targetFolder.files.addUsingPath === 'function') {
-    const addRes = await targetFolder.files.addUsingPath(file.name, file, { Overwrite: true });
-    // Get server-relative URL
+    const addRes = await targetFolder.files.addUsingPath(safeName, file, { Overwrite: true });
     const item = await addRes.file.getItem();
     const props: any = await item.select('FileRef')();
-    const serverRelativeUrl: string = props && props.FileRef ? props.FileRef : `${libSrvRel}/${[...segs, file.name].join('/')}`.replace(/\/+/g, '/');
-    return { serverRelativeUrl, absoluteUrl: webAbs + serverRelativeUrl };
+    const srl: string = props && props.FileRef ? props.FileRef : `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
+    return { serverRelativeUrl: srl, absoluteUrl: webAbs + srl };
   }
 
-  // PnPjs v2 fallback:
+  // Fallback (older pnpjs): add(name, contents, overwrite)
   // @ts-ignore
-  const addResV2 = await targetFolder.files.add(file.name, file, true);
+  const addResV2 = await targetFolder.files.add(safeName, file, true);
   // @ts-ignore
   const itemV2 = await addResV2.file.getItem();
   // @ts-ignore
   const propsV2: any = await itemV2.select('FileRef')();
-  const serverRelativeUrlV2: string = propsV2 && propsV2.FileRef ? propsV2.FileRef : `${libSrvRel}/${[...segs, file.name].join('/')}`.replace(/\/+/g, '/');
-  return { serverRelativeUrl: serverRelativeUrlV2, absoluteUrl: webAbs + serverRelativeUrlV2 };
+  const srl2: string = propsV2 && propsV2.FileRef ? propsV2.FileRef : `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
+  return { serverRelativeUrl: srl2, absoluteUrl: webAbs + srl2 };
 }
+// ---- BUTTON HANDLER (unchanged idea) ----
 private openUploadForLesson = (lessonId: number) => {
   const input = document.createElement('input');
   input.type = 'file';
@@ -94,26 +92,20 @@ private openUploadForLesson = (lessonId: number) => {
       const file = input.files[0];
       const { absoluteUrl } = await this.uploadToLibrary(file, lessonId);
 
-      // Auto-set type by extension if you like (optional)
-      // const kind = this.kindFromFilename(file.name) || existingKind;
-
-      // Update row in-memory and mark as updated
-      this.setState(s => {
-        const idx = s.lessons.findIndex(l => l.Id === lessonId);
-        if (idx < 0) return s;
-        const updated = { ...s.lessons[idx], ContentUrl: absoluteUrl /*, ContentTypeChoice: kind*/ };
+      this.setState((s) => {
+        const idx = s.lessons.findIndex((l) => l.Id === lessonId);
+        if (idx < 0) return s as any;
+        const updated = { ...s.lessons[idx], ContentUrl: absoluteUrl };
         const lessons = s.lessons.slice();
         lessons[idx] = updated;
         const updLessons = upsertById(s.updLessons, updated);
-        return { lessons, updLessons };
+        return { lessons, updLessons } as any;
       });
 
       DevExpress.ui.notify('File uploaded and URL set.', 'success', 2000);
     } catch (err) {
-      // Helpful diagnostics for 404s
-      const msg = (err && (err as any).message) ? (err as any).message : String(err);
-      DevExpress.ui.notify('Upload failed: ' + msg, 'error', 3000);
-      // console.error(err);
+      const msg = err && (err as any).message ? (err as any).message : String(err);
+      DevExpress.ui.notify('Upload failed: ' + msg, 'error', 4000);
     }
   };
   input.click();
