@@ -1,77 +1,120 @@
-private async uploadToLibrary(file: File, lessonId: number): Promise<{ serverRelativeUrl: string; absoluteUrl: string; }> {
+// 1) Resolve the library root folder (by Title) and return its folder object + server-relative path
+private async getCourseAssetsRoot() {
   const sp = getSP(this.props.context);
-
-  // Web info to assemble server-relative + absolute URLs
-  const webInfo: any = await sp.web.select('ServerRelativeUrl', 'Url')();
-  const webServerRel: string = webInfo.ServerRelativeUrl || '/';
-  const webAbs: string = (webInfo.Url || '').replace(/\/+$/, '');
-
-  // Build the base library server-relative path.
-  // If COURSE_ASSETS_LIB starts with '/', assume it's already server-relative; otherwise join to web root.
-  const baseLibSrvRel =
-    COURSE_ASSETS_LIB.charAt(0) === '/'
-      ? COURSE_ASSETS_LIB
-      : (webServerRel.replace(/\/+$/, '') + '/' + COURSE_ASSETS_LIB).replace(/\/+/g, '/');
-
-  // Resolve nested folder path (ensure it exists)
-  const targetFolderSrvRel = await this.resolveTargetFolderServerRelative(baseLibSrvRel, lessonId);
-
-  const overwrite = true;
-  const folder = sp.web.getFolderByServerRelativePath(targetFolderSrvRel);
-  const addRes = await folder.files.addUsingPath(file.name, file, { Overwrite: overwrite }); // works in pnpjs v3; for v2 use folder.files.add
-
-  // Get server-relative of the uploaded file
-  const fileItem = await addRes.file.getItem();
-  const fileProps: any = await fileItem.select('FileRef')();
-  const serverRelativeUrl: string = (fileProps && fileProps.FileRef) ? fileProps.FileRef : (targetFolderSrvRel + '/' + file.name).replace(/\/+/g, '/');
-  const absoluteUrl: string = webAbs + serverRelativeUrl;
-
-  return { serverRelativeUrl, absoluteUrl };
+  // Get RootFolder to avoid path guessing
+  const lib = await sp.web.lists.getByTitle(COURSE_ASSETS_LIB_TITLE).rootFolder.select('ServerRelativeUrl')();
+  const libSrvRel: string = lib.ServerRelativeUrl; // e.g. /sites/lms/CourseAssets
+  const rootFolder = sp.web.getFolderByServerRelativePath(libSrvRel);
+  return { rootFolder, libSrvRel };
 }
 
-private async resolveTargetFolderServerRelative(baseLibSrvRel: string, lessonId: number): Promise<string> {
-  // If you don’t want nesting: just ensure the doc lib exists and return it.
-  if (!NEST_BY_COURSE_AND_MODULE) {
-    await this.ensureFolderPathServerRelative(baseLibSrvRel);
-    return baseLibSrvRel;
-  }
+// 2) Ensure nested folder path under the library: pass an array of segments (no leading /)
+private async ensureNestedFolder(parent: any, segments: string[]): Promise<any> {
+  // parent is a Folder instance (e.g., returned by getFolderByServerRelativePath)
+  let current = parent;
 
-  // Build nested path CourseAssets/Courses/<courseId>/Modules/<moduleId>
-  const lesson = this.state.lessons.find((l) => l.Id === lessonId);
-  if (!lesson) {
-    await this.ensureFolderPathServerRelative(baseLibSrvRel);
-    return baseLibSrvRel;
-  }
+  for (let i = 0; i < segments.length; i++) {
+    const seg = (segments[i] || '').trim();
+    if (!seg) continue;
 
-  const mod = this.state.modules.find((m) => m.Id === lesson.ModuleId);
-  const courseId = mod && typeof mod.CourseId === 'number' ? mod.CourseId : null;
-
-  const parts: string[] = [baseLibSrvRel, 'Courses'];
-  if (courseId) parts.push(String(courseId));
-  if (mod) parts.push('Modules', String(mod.Id));
-
-  const full = parts.join('/').replace(/\/+/g, '/');
-  await this.ensureFolderPathServerRelative(full);
-  return full;
-}
-
-private async ensureFolderPathServerRelative(serverRelativePath: string): Promise<void> {
-  const sp = getSP(this.props.context);
-  // Split into segments starting from the library root
-  const path = serverRelativePath.replace(/^\/+/, '');
-  const segments = path.split('/');
-  if (segments.length === 0) return;
-
-  // First segment might be 'sites', handle that by rebuilding as we go
-  let current = '/' + segments[0];
-  for (let i = 1; i < segments.length; i++) {
-    current = (current + '/' + segments[i]).replace(/\/+/g, '/');
+    // Try to get the child folder; if it fails (404), create it under "current"
     try {
-      // exists?
-      await sp.web.getFolderByServerRelativePath(current).select('ServerRelativeUrl')();
-    } catch (_) {
-      // create
-      await sp.web.folders.addUsingPath(current);
+      // If exists, just rebind current to that folder
+      const child = current.folders.getByName(seg);
+      await child.select('ServerRelativeUrl')();
+      current = child;
+    } catch {
+      // Create relative to the *current* folder (NO leading slash here)
+      await current.folders.addUsingPath(seg);
+      current = current.folders.getByName(seg);
     }
   }
+
+  return current; // final folder
 }
+
+// 3) Build your desired folder structure for a lesson (Course/Module nesting is optional)
+private buildLessonFolderSegments(lessonId: number): string[] {
+  if (!NEST_BY_COURSE_AND_MODULE) return [];
+  const lesson = this.state.lessons.find(l => l.Id === lessonId);
+  if (!lesson) return [];
+
+  const mod = this.state.modules.find(m => m.Id === lesson.ModuleId);
+  const courseId = mod && typeof mod.CourseId === 'number' ? mod.CourseId : null;
+
+  const segs: string[] = ['Courses'];
+  if (courseId) segs.push(String(courseId));
+  if (mod) segs.push('Modules', String(mod.Id));
+  return segs;
+}
+
+// 4) Upload API — returns absolute + server-relative URLs
+private async uploadToLibrary(file: File, lessonId: number): Promise<{ serverRelativeUrl: string; absoluteUrl: string }> {
+  const sp = getSP(this.props.context);
+
+  // Resolve web absolute URL for later
+  const webInfo: any = await sp.web.select('Url')();
+  const webAbs: string = (webInfo.Url || '').replace(/\/+$/, '');
+
+  // Get library root folder
+  const { rootFolder, libSrvRel } = await this.getCourseAssetsRoot();
+
+  // Ensure nested folders (relative to the library root)
+  const segs = this.buildLessonFolderSegments(lessonId);
+  const targetFolder = await this.ensureNestedFolder(rootFolder, segs);
+
+  // Upload the file into the target folder (relative file name only)
+  // PnPjs v3:
+  if (typeof targetFolder.files.addUsingPath === 'function') {
+    const addRes = await targetFolder.files.addUsingPath(file.name, file, { Overwrite: true });
+    // Get server-relative URL
+    const item = await addRes.file.getItem();
+    const props: any = await item.select('FileRef')();
+    const serverRelativeUrl: string = props && props.FileRef ? props.FileRef : `${libSrvRel}/${[...segs, file.name].join('/')}`.replace(/\/+/g, '/');
+    return { serverRelativeUrl, absoluteUrl: webAbs + serverRelativeUrl };
+  }
+
+  // PnPjs v2 fallback:
+  // @ts-ignore
+  const addResV2 = await targetFolder.files.add(file.name, file, true);
+  // @ts-ignore
+  const itemV2 = await addResV2.file.getItem();
+  // @ts-ignore
+  const propsV2: any = await itemV2.select('FileRef')();
+  const serverRelativeUrlV2: string = propsV2 && propsV2.FileRef ? propsV2.FileRef : `${libSrvRel}/${[...segs, file.name].join('/')}`.replace(/\/+/g, '/');
+  return { serverRelativeUrl: serverRelativeUrlV2, absoluteUrl: webAbs + serverRelativeUrlV2 };
+}
+private openUploadForLesson = (lessonId: number) => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '*/*';
+  input.onchange = async () => {
+    if (!input.files || !input.files.length) return;
+    try {
+      const file = input.files[0];
+      const { absoluteUrl } = await this.uploadToLibrary(file, lessonId);
+
+      // Auto-set type by extension if you like (optional)
+      // const kind = this.kindFromFilename(file.name) || existingKind;
+
+      // Update row in-memory and mark as updated
+      this.setState(s => {
+        const idx = s.lessons.findIndex(l => l.Id === lessonId);
+        if (idx < 0) return s;
+        const updated = { ...s.lessons[idx], ContentUrl: absoluteUrl /*, ContentTypeChoice: kind*/ };
+        const lessons = s.lessons.slice();
+        lessons[idx] = updated;
+        const updLessons = upsertById(s.updLessons, updated);
+        return { lessons, updLessons };
+      });
+
+      DevExpress.ui.notify('File uploaded and URL set.', 'success', 2000);
+    } catch (err) {
+      // Helpful diagnostics for 404s
+      const msg = (err && (err as any).message) ? (err as any).message : String(err);
+      DevExpress.ui.notify('Upload failed: ' + msg, 'error', 3000);
+      // console.error(err);
+    }
+  };
+  input.click();
+};
