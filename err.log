@@ -2,6 +2,6 @@ function nxValidateTargetGroup() {
     var $sel = NWF$(".select2-wrapper");
     var ok = Array.isArray($sel.val()) && $sel.val().length > 0;
     var $wrap = $sel.closest(".nf-form-input");
-    NWF$($wrap).toggleClass("nf-error-highlight", !ok);
+    $wrap.toggleClass("nf-error-highlight", !ok);
     return ok;
 }
