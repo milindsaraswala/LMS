@@ -1,7 +1,17 @@
-function nxValidateTargetGroup() {
-    var $sel = NWF$(".select2-wrapper");
+// Pass an array of JS variable IDs for your Select2 controls
+function nxValidateSelect2Group(vars) {
+  var allOk = true;
+
+  vars.forEach(function(jsVar) {
+    var $sel = NWF$('#' + jsVar + ' .select2-wrapper'); 
+    if (!$sel.length) return; // skip if control not found
+
     var ok = Array.isArray($sel.val()) && $sel.val().length > 0;
     var $wrap = $sel.closest(".nf-form-input");
     $wrap.toggleClass("nf-error-highlight", !ok);
-    return ok;
+
+    if (!ok) allOk = false;
+  });
+
+  return allOk;
 }
