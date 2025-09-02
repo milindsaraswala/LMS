@@ -1,41 +1,7 @@
-private async uploadToLibrary(
-  file: File,
-  lessonId: number
-): Promise<{ serverRelativeUrl: string; absoluteUrl: string }> {
-  const sp = getSP(this.props.context);
-
-  // Use site collection absolute URL of the target web
-  const webInfo: any = await sp.web.select('Url')();
-  const webAbs: string = (webInfo.Url || '').replace(/\/+$/, '');
-
-  // Resolve /lms/CourseAssets and ensure nested folder
-  const { rootFolder, libSrvRel } = await this.getCourseAssetsRoot();
-  const segs = this.buildLessonFolderSegments(lessonId);
-  const targetFolder = await this.ensureNestedFolder(rootFolder, segs);
-
-  const safeName = this.sanitizeFileName(file.name);
-
-  // PnPjs v3 path
-  if (typeof targetFolder.files.addUsingPath === 'function') {
-    const addRes = await targetFolder.files.addUsingPath(safeName, file, { Overwrite: true });
-
-    // Read file's own ServerRelativeUrl instead of going through ListItem
-    const fMeta = await addRes.file.select('ServerRelativeUrl')();
-    const srl: string =
-      fMeta?.ServerRelativeUrl ||
-      `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
-
-    return { serverRelativeUrl: srl, absoluteUrl: webAbs + srl };
-  }
-
-  // Fallback for older pnpjs
-  // @ts-ignore
-  const addResV2 = await targetFolder.files.add(safeName, file, true);
-  // @ts-ignore
-  const fMeta2 = await addResV2.file.select('ServerRelativeUrl')();
-  const srl2: string =
-    fMeta2?.ServerRelativeUrl ||
-    `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
-
-  return { serverRelativeUrl: srl2, absoluteUrl: webAbs + srl2 };
+function nxValidateTargetGroup() {
+    var $sel = NWF$(".select2-wrapper");
+    var ok = Array.isArray($sel.val()) && $sel.val().length > 0;
+    var $wrap = $sel.closest(".nf-form-input");
+    NWF$($wrap).toggleClass("nf-error-highlight", !ok);
+    return ok;
 }
