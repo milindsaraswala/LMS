@@ -1,17 +1,57 @@
-// Pass an array of JS variable IDs for your Select2 controls
-function nxValidateSelect2Group(vars) {
-  var allOk = true;
+NWF.FormFiller.Events.RegisterAfterReady(function () {
+  var isDisplay = !!NWF$('.nf-displayForm').length;
+  var isEditNew = !!(NWF$('.nf-editForm').length || NWF$('.nf-newForm').length);
 
-  vars.forEach(function(jsVar) {
-    var $sel = NWF$('#' + jsVar + ' .select2-wrapper'); 
-    if (!$sel.length) return; // skip if control not found
+  // map your fields here (left = connected hidden field; right = optional host to render into on Display)
+  var HIDDEN_VARS = [ vTargetGroup1, vTargetGroup2, vTargetGroup3, vTargetGroup4, vTargetGroup5 ];
+  var HOST_VARS   = [ null,          null,          null,          null,          null          ]; // or panel/container vars
 
-    var ok = Array.isArray($sel.val()) && $sel.val().length > 0;
-    var $wrap = $sel.closest(".nf-form-input");
-    $wrap.toggleClass("nf-error-highlight", !ok);
+  if (isEditNew) {
+    // your normal Select2 init goes here (only for New/Edit)
+    if (typeof initCustomDropDown === 'function') { initCustomDropDown(); }
+    return;
+  }
 
-    if (!ok) allOk = false;
-  });
+  if (isDisplay) {
+    // In Display mode: show the saved values nicely; no Select2 init.
+    for (var i=0; i<HIDDEN_VARS.length; i++) {
+      renderDisplayFromHidden(HIDDEN_VARS[i], HOST_VARS[i]);
+    }
+  }
 
-  return allOk;
-}
+  function renderDisplayFromHidden(hiddenVar, hostVar){
+    if (!hiddenVar) return;
+
+    var $hidden = NWF$('#' + hiddenVar);
+    if (!$hidden.length) return;
+
+    // read value (display mode often renders text, not inputs)
+    var raw = $hidden.is('input,textarea') ? ($hidden.val() || '')
+                                           : ($hidden.text() || '');
+    raw = raw.trim();
+    if (!raw) return;
+
+    // split on semicolon or newline
+    var parts = raw.split(/[;\r\n]+/)
+                   .map(function(s){ return (s||'').trim(); })
+                   .filter(Boolean);
+    if (!parts.length) return;
+
+    // build safe HTML list
+    var html = '<div class="nx-multival"><ul>';
+    for (var j=0; j<parts.length; j++){
+      html += '<li>' + NWF$('<div/>').text(parts[j]).html() + '</li>';
+    }
+    html += '</ul></div>';
+
+    // choose where to render
+    var $target = hostVar ? NWF$('#' + hostVar) : $hidden.closest('.nf-form-input');
+    if (!$target.length) $target = $hidden;
+
+    // replace the visible text node; keep the actual hidden value intact
+    // safest is to append our view right after, and hide the original text if any:
+    var $valueNode = ($hidden.is('input,textarea') ? $hidden : $target);
+    $valueNode.hide();               // hide original
+    $target.append(html);            // show pretty list
+  }
+});
