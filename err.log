@@ -55,7 +55,12 @@ export default class CoursePlayer extends React.Component<Props, State> {
 						return (
 							<div key={m.Id} style={{ marginBottom: 12, opacity: unlocked ? 1 : 0.5 }}>
 								<div style={{ fontWeight: 700, marginBottom: 6 }}>
-									{m.Title} {!unlocked ? <span style={{ fontSize: 12, color: '#a00' }}>(Locked)</span> : null}
+									{m.Title}
+									{(() => {
+										const mins = this.computeModuleMinutes(m.Id);
+										return mins ? <span style={{ opacity: 0.7, fontWeight: 400 }}> • {mins} min</span> : null;
+									})()}
+									{!unlocked ? <span style={{ fontSize: 12, color: '#a00' }}>(Locked)</span> : null}
 								</div>
 								<ul style={{ listStyle: 'none', paddingLeft: 0, margin: 0 }}>
 									{(lessonsByModule[m.Id] || []).map((l) => {
@@ -130,6 +135,11 @@ export default class CoursePlayer extends React.Component<Props, State> {
 		);
 	}
 
+	private computeModuleMinutes = (moduleId: number) => {
+		const list = this.state.lessonsByModule[moduleId] || [];
+		return list.reduce((sum, l) => sum + (Number(l.EstimatedMinutes) || 0), 0);
+	};
+
 	private getCourseIdFromQS(): number | null {
 		let s = window.location.search || '';
 		if (s.indexOf('?') === 0) s = s.substring(1);
@@ -188,17 +198,18 @@ export default class CoursePlayer extends React.Component<Props, State> {
 
 			const modsRaw = await sp.web.lists
 				.getByTitle('Modules')
-				.items.select('Id', 'Title', 'Order0', 'CourseId')
+				.items.select('Id', 'Title', 'Order0', 'CourseId', 'DurationMinutes')
 				.filter(`CourseId eq ${id}`)
 				.orderBy('Order0', true)
 				.orderBy('Id', true)
 				.top(5000)();
 
-			const modules: Module[] = modsRaw.map((m: any) => ({
+			const modules: Module[] = modsRaw.map((m: Module) => ({
 				Id: m.Id,
 				Title: m.Title,
 				Order0: m.Order0,
-				CourseId: id
+				CourseId: id,
+				DurationMinutes: m.DurationMinutes
 			}));
 			this.setState({ modules });
 
