@@ -1,71 +1,51 @@
-// Read current value from a multiline control (plain or rich)
-function nxGetMultiline(jsVar){
-  var $w = NWF$('#' + jsVar);
-  if(!$w.length) return '';
-  var $ta = $w.is('textarea') ? $w : $w.find('textarea').first();
-  if ($ta.length) return $ta.val() || '';
-  var $if = $w.find('iframe').first();
-  if ($if.length){ try { return $if.contents().find('body').html() || ''; } catch(e){} }
-  return ($w.text() || '').trim();
-}
+private applyCourseSecurity = async (courseId: number) => {
+  const sp = getSP(this.props.context);
+  const web = sp.web;
 
-// Set value into a multiline control (plain or rich)
-function nxSetMultiline(jsVar, html, isRich){
-  var $w = NWF$('#' + jsVar);
-  if(!$w.length) return false;
-  var changed = false;
-  var $ta = $w.is('textarea') ? $w : $w.find('textarea').first();
+  // Read Visibility & OwnerGroups (IDs)
+  const c = await web.lists.getByTitle('Courses').items.getById(courseId)
+    .select('Id','VisibilityChoice','OwnerGroups/Id','Author/Id')
+    .expand('OwnerGroups','Author')();
 
-  if (isRich){
-    var $if = $w.find('iframe').first();
-    if ($if.length){ try { $if.contents().find('body').html(html); changed = true; } catch(e){} }
-    if ($ta.length){ $ta.val(html); changed = true; }
-  } else {
-    if ($ta.length){ $ta.val(html); changed = true; }
-  }
-  if (changed){ ($ta.length ? $ta : $w).change(); }
-  return changed;
-}
+  const visibility: 'MeOnly' | 'SelectGroups' = (c.VisibilityChoice || 'MeOnly');
+  const ownerUserId: number = c.Author && c.Author.Id;
+  const groupIds: number[] = (c.OwnerGroups || []).map((g:any)=>g.Id);
 
-// Remove all occurrences of a specific attachment link (and tidy wrappers)
-function nxStripAttachmentFromHtml(html, fileUrl, filename){
-  var wrap = document.createElement('div');
-  wrap.innerHTML = html || '';
+  // Decide principals:
+  const principalIds: number[] = [];
+  if (ownerUserId) principalIds.push(ownerUserId);
+  if (visibility === 'SelectGroups' && groupIds.length) principalIds.push(...groupIds);
 
-  // remove matching anchors and their closest <div> wrapper (if present)
-  Array.from(wrap.querySelectorAll('a')).forEach(function(a){
-    var href = (a.getAttribute('href') || '').trim();
-    var text = (a.textContent || '').trim();
-    var match = (href === fileUrl) || (href.endsWith('/' + filename)) || (text === filename);
-    if (match){
-      var parentDiv = a.closest('div');
-      if (parentDiv && parentDiv.parentNode){ parentDiv.parentNode.removeChild(parentDiv); }
-      else if (a.parentNode){ a.parentNode.removeChild(a); }
+  // Role definition (Contribute)
+  const contrib = await web.roleDefinitions.getByName('Contribute')();
+  const contribId = contrib.Id;
+
+  // Utility: set ACL for a single item
+  const setItemAcl = async (listTitle: string, id: number) => {
+    const item = web.lists.getByTitle(listTitle).items.getById(id);
+    // Break inheritance (do not copy perms)
+    await item.breakRoleInheritance(false, false);
+    // Add principals
+    for (const pid of principalIds) {
+      await item.roleAssignments.add(pid, contribId);
     }
-  });
+  };
 
-  // remove empty divs (no text and no anchors)
-  Array.from(wrap.querySelectorAll('div')).forEach(function(d){
-    var hasAnchor = d.querySelector('a');
-    var text = (d.textContent || '').replace(/\s+/g,'').trim();
-    if (!hasAnchor && !text && d.parentNode) d.parentNode.removeChild(d);
-  });
+  // 1) Course
+  await setItemAcl('Courses', courseId);
 
-  // remove empty tables (common in your markup)
-  Array.from(wrap.querySelectorAll('table')).forEach(function(t){
-    var hasAnchor = t.querySelector('a');
-    var text = (t.textContent || '').replace(/\s+/g,'').trim();
-    if (!hasAnchor && !text && t.parentNode) t.parentNode.removeChild(t);
-  });
+  // 2) Modules in this course
+  const modules = await web.lists.getByTitle('Modules')
+    .items.select('Id','CourseId').filter(`CourseId eq ${courseId}`).top(5000)();
+  for (const m of modules) await setItemAcl('Modules', m.Id);
 
-  return wrap.innerHTML;
-}
-
-// Convenience: remove deleted file from a rich-text control
-function nxRemoveAttachmentHtml(richJsVar, fileUrl){
-  var filename = String(fileUrl || '').split('/').pop();
-  var current = nxGetMultiline(richJsVar);
-  var updated = nxStripAttachmentFromHtml(current, fileUrl, filename);
-  nxSetMultiline(richJsVar, updated, true); // true = Rich Text
-}
-
+  // 3) Lessons under those modules
+  const modIds = modules.map((m:any)=>m.Id);
+  if (modIds.length) {
+    // Chunk if needed; simple filter shown here:
+    const lessons = await web.lists.getByTitle('Lessons')
+      .items.select('Id','ModuleId')
+      .filter(`ModuleId in (${modIds.join(',')})`).top(5000)();
+    for (const l of lessons) await setItemAcl('Lessons', l.Id);
+  }
+};
