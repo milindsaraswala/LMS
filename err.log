@@ -1,1652 +1,480 @@
-/// <reference path="../../../../../@types/devExtreme/dx.all.d.ts" />
-import 'devextreme';
-import * as $ from 'jquery';
-import * as React from 'react';
-import { ContentKind, Course, Id, Lesson, Module } from '../common/models';
-import { getSP } from '../common/pnp';
-import { findIndexById, normKey, sanitizeHtml, toFieldUrlValue, upsertById } from '../common/utils';
-import { AdminCoursePreview, LessonHtmlEditor, QuizEditor } from './';
+using System;
+using System.Configuration;
+using System.Net;
+using System.Threading.Tasks;
+using System.Web.Http;
+using webApi.Models.Floward;
+using webApi.Models.PACI;
 
-require('./style.css');
+namespace webApi.Controllers
+{
+	[RoutePrefix("api/paci")]
+	public class PaciAuthController : ApiController
+	{
+		private readonly IPaciSoapClient _soapClient;
 
-const REQUIRE_QUIZ_PER_MODULE = true;
-const REQUIRE_QUIZ_AFTER_EACH_LESSON = true;
-
-const COURSE_ASSETS_LIB = '/lms/CourseAssets';
-const NEST_BY_COURSE_AND_MODULE = true;
-const AUTO_SET_TYPE_FROM_EXTENSION = true;
-
-const EXT_TO_KIND: { [ext: string]: string } = {
-	'.pdf': 'PDF',
-	'.ppt': 'PPT',
-	'.pptx': 'PPT',
-	'.mp4': 'Video',
-	'.webm': 'Video',
-	'.mov': 'Video',
-	'.mp3': 'Audio',
-	'.wav': 'Audio',
-	'.doc': 'DOC',
-	'.docx': 'DOC',
-	'.xls': 'XLS',
-	'.xlsx': 'XLS'
-};
-
-type Props = { context: any };
-type State = {
-	loading: boolean;
-	error?: string;
-
-	saving?: boolean;
-
-	courses: Course[];
-	modules: Module[];
-	lessons: Lesson[];
-
-	newCourses: Course[];
-	updCourses: Course[];
-	delCourses: Id[];
-
-	newModules: Module[];
-	updModules: Module[];
-	delModules: Id[];
-
-	newLessons: Lesson[];
-	updLessons: Lesson[];
-	delLessons: Id[];
-
-	htmlPopupVisible: boolean;
-	editingLessonId?: number;
-
-	quizPopupVisible: boolean;
-
-	siteGroups: { Id: number; Title: string }[];
-};
-
-const popupBackdropStyle: React.CSSProperties = {
-	position: 'fixed',
-	inset: 0,
-	background: 'rgba(0,0,0,.35)',
-	zIndex: 9999,
-	display: 'flex',
-	alignItems: 'center',
-	justifyContent: 'center',
-	padding: 12
-};
-
-const popupCardStyle: React.CSSProperties = {
-	background: '#fff',
-	width: '900px',
-	maxWidth: '95vw',
-	height: '700px',
-	maxHeight: '90vh',
-	boxShadow: '0 10px 30px rgba(0,0,0,.2)',
-	borderRadius: 6,
-	display: 'flex',
-	flexDirection: 'column'
-};
-
-const popupHeaderStyle: React.CSSProperties = {
-	display: 'flex',
-	alignItems: 'center',
-	padding: '8px 12px',
-	borderBottom: '1px solid #eee'
-};
-
-export default class AdminBuilder extends React.Component<Props, State> {
-	private popuCardEl: HTMLDivElement | null;
-
-	private coursesGridRef: HTMLDivElement = null as any;
-	private modulesGridRef: HTMLDivElement = null as any;
-	private lessonsGridRef: HTMLDivElement = null as any;
-
-	private coursesDs: DevExpress.data.DataSource;
-	private modulesDs: DevExpress.data.DataSource;
-	private lessonsDs: DevExpress.data.DataSource;
-
-	private _tempId = -1;
-
-	private hiddenFileInputRef: HTMLInputElement | null = null;
-	private pendingUploadLessonId: number | null = null;
-	private isUploading: boolean = false;
-
-	private _skipNextBeforeUnload = false;
-
-	constructor(props: Props) {
-		super(props);
-		this.state = {
-			loading: true,
-
-			courses: [],
-			modules: [],
-			lessons: [],
-
-			newCourses: [],
-			updCourses: [],
-			delCourses: [],
-
-			newModules: [],
-			updModules: [],
-			delModules: [],
-
-			newLessons: [],
-			updLessons: [],
-			delLessons: [],
-
-			htmlPopupVisible: false,
-			editingLessonId: undefined,
-
-			quizPopupVisible: false,
-
-			siteGroups: []
-		};
-
-		this.coursesDs = this.buildCoursesDataSource();
-		this.modulesDs = this.buildModulesDataSource();
-		this.lessonsDs = this.buildLessonsDataSource();
-	}
-
-	public async componentDidMount() {
-		try {
-			const sp = getSP(this.props.context);
-			const groups = await sp.web.siteGroups.select('Id', 'Title')();
-
-			await this.loadAll();
-			this.setState({ loading: false }, () => {
-				this.buildAllGrids();
-			});
-			window.addEventListener('message', this.onEditorMessage);
-			window.addEventListener('beforeunload', this.onBeforeUnload);
-			document.addEventListener('click', this.onDocumentClickCapture, true);
-		} catch (e) {
-			this.setState({ loading: false, error: e && e.message ? e.message : String(e) });
-		}
-	}
-
-	public componentWillUnmount(): void {
-		const cg = $(this.coursesGridRef).data('dxDataGrid');
-		if (cg && cg.dispose) cg.dispose();
-
-		const mg = $(this.modulesGridRef).data('dxDataGrid');
-		if (mg && mg.dispose) mg.dispose();
-
-		const lg = $(this.lessonsGridRef).data('dxDataGrid');
-		if (lg && lg.dispose) lg.dispose();
-
-		window.removeEventListener('message', this.onEditorMessage);
-		window.removeEventListener('beforeunload', this.onBeforeUnload);
-		document.removeEventListener('click', this.onDocumentClickCapture, true);
-	}
-
-	public render() {
-		const qs = new URLSearchParams(window.location.search);
-		if (qs.get('editHtml') === '1') {
-			const lessonId = Number(qs.get('lessonId'));
-			const returnUrl = qs.get('returnUrl');
-			return <LessonHtmlEditor context={this.props.context} lessonId={lessonId} returnUrl={returnUrl} />;
+		public PaciAuthController()
+		{
+			_soapClient = new PaciSoapClient();
 		}
 
-		if (qs.get('previewCourse') === '1') {
-			const courseId = Number(qs.get('courseId'));
-			return <AdminCoursePreview context={this.props.context} courseId={courseId} onBack={() => history.back()} />;
-		}
-		if (this.state.loading) return <div>Loading…</div>;
-		if (this.state.error) return <div style={{ color: 'red' }}>Error: {this.state.error}</div>;
+		[HttpPost]
+		[Route("initiate-auth")]
+		public async Task<IHttpActionResult> InitiateAuth(PaciInitiateAuthRequestDto requestDto)
+		{
+			if (requestDto == null || string.IsNullOrEmpty(requestDto.CivilNo))
+				return BadRequest("CivilNo is required");
 
-		return (
-			<div>
-				<h3>Admin Builder</h3>
-				<p style={{ marginTop: 0 }}>
-					Edit below, then click <b>Save changes</b>. All edits are kept in-memory until saved.
-				</p>
+			try
+			{
+				var callbackUrl = ConfigurationManager.AppSettings["PaciCallbackUrl"];
+				var resp = await _soapClient.InitiateAuthAsync(requestDto, callbackUrl);
 
-				<h4>Courses</h4>
-				<div ref={(el) => (this.coursesGridRef = el as any)} />
+				if (string.IsNullOrEmpty(resp.RequestId))
+				{
+					return Content(HttpStatusCode.BadGateway, "No RequestId returned from PACI");
+				}
 
-				<h4 style={{ marginTop: 24 }}>Modules</h4>
-				<div ref={(el) => (this.modulesGridRef = el as any)} />
-
-				<h4 style={{ marginTop: 24 }}>Lessons</h4>
-				<div ref={(el) => (this.lessonsGridRef = el as any)} />
-
-				<div style={{ marginTop: 24 }}>
-					<button onClick={this.onSave}>Save changes</button>
-				</div>
-				<input type='file' ref={(el) => (this.hiddenFileInputRef = el)} style={{ display: 'none' }} onChange={this.onFilePicked} />
-				{this.state.htmlPopupVisible && this.state.editingLessonId != null ? (
-					<div style={popupBackdropStyle} className='admin-popup'>
-						<div style={popupCardStyle} ref={(el) => (this.popuCardEl = el)}>
-							<div style={popupHeaderStyle}>
-								<div style={{ fontWeight: 600 }}>Edit Lesson HTML</div>
-								<button onClick={this.closeHtmlEditor}>✕</button>
-							</div>
-							<div style={{ padding: 12, maxHeight: '70vh', overflow: 'auto' }}>
-								<LessonHtmlEditor
-									context={this.props.context}
-									lessonId={this.state.editingLessonId}
-									onSaved={this.onHtmlSaved}
-									returnUrl={undefined}
-									overlayContainerEl={this.popuCardEl}
-								/>
-							</div>
-						</div>
-					</div>
-				) : null}
-				{this.state.quizPopupVisible && this.state.editingLessonId != null ? (
-					<div style={popupBackdropStyle}>
-						<div style={popupCardStyle}>
-							<div style={popupHeaderStyle}>
-								<div style={{ fontWeight: 600 }}>Edit Quiz</div>
-								<button onClick={this.closeQuizEditor}>✕</button>
-							</div>
-							<div style={{ padding: 12, maxHeight: '70vh', overflow: 'auto' }}>
-								<QuizEditor context={this.props.context} lessonId={this.state.editingLessonId} onSaved={this.onQuizSaved} returnUrl={undefined} />
-							</div>
-						</div>
-					</div>
-				) : null}
-			</div>
-		);
-	}
-
-	private onBeforeUnload = (e: BeforeUnloadEvent) => {
-		if (this._skipNextBeforeUnload) {
-			this._skipNextBeforeUnload = false;
-			return;
-		}
-		if (this.hasUnsavedChanges()) {
-			e.preventDefault();
-			e.returnValue = '';
-		}
-	};
-
-	private onDocumentClickCapture = (ev: MouseEvent) => {
-		if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-
-		const target = ev.target as HTMLElement | null;
-		const a = target && target.closest ? (target.closest('a') as HTMLAnchorElement | null) : null;
-		if (!a) return;
-
-		if (a.target && a.target.toLocaleLowerCase() === '_blank') return;
-
-		if (a.getAttribute('href') && a.getAttribute('href').startsWith('#')) return;
-
-		try {
-			const url = new URL(a.href, window.location.href);
-			if (url.origin !== window.location.origin) return;
-		} catch {
-			return;
-		}
-
-		if (this.hasUnsavedChanges()) {
-			const ok = confirm('You have unsaved changes. Leave this page and discard them?');
-			if (!ok) {
-				ev.preventDefault();
-				ev.stopPropagation();
+				return Ok(resp);
+			}
+			catch (Exception ex)
+			{
+				return Content(HttpStatusCode.InternalServerError,
+					new { message = "Error while calling PACI", detail = ex.Message });
 			}
 		}
-	};
 
-	private safeNavigate = (go: () => void) => {
-		if (this.hasUnsavedChanges()) {
-			const ok = confirm('You have unsaved changes. Continue and and discard them?');
-			if (!ok) return false;
+		[HttpGet]
+		[Route("ping")]
+		public IHttpActionResult Ping()
+		{
+			return Ok("PACI controller loaded");
 		}
-		go();
-		return true;
-	};
+	}
+}
 
-	private onEditorMessage = (e: MessageEvent) => {
-		if (e && e.data && e.data.type === 'lessonHtmlSaved') {
-			this.lessonsDs.reload();
+
+==========================================
+
+using Newtonsoft.Json;
+using System;
+using System.Threading.Tasks;
+using System.Web.Http;
+using webApi.Models.PACI;
+using webApi.Services.Floward;
+
+namespace webApi.Controllers
+{
+	[RoutePrefix("api/paci")]
+	public class PaciCallbackController : ApiController
+	{
+		private readonly IPaciAuthCallbackLogger _logger;
+
+		public PaciCallbackController()
+		{
+			_logger = new PaciAuthCallbackLogger();
 		}
-	};
 
-	private tempId() {
-		return this._tempId--;
-	}
+		[HttpPost]
+		[Route("callback/auth")]
+		public async Task<IHttpActionResult> CallbackAuth()
+		{
+			string rawJson = null;
+			int logItemId = 0;
+			try
+			{
+				rawJson = await Request.Content.ReadAsStringAsync();
 
-	private async loadAll() {
-		const sp = getSP(this.props.context);
-
-		const [courses, modules, lessons] = await Promise.all([
-			sp.web.lists
-				.getByTitle('Courses')
-				.items.select(
-					'Id',
-					'Title',
-					'Code',
-					'Description',
-					'DurationMinutes',
-					'Level',
-					'Status',
-					'ThumbnailUrl',
-					'VisibilityChoice',
-					'OwnerGroups/Id',
-					'OwnerGroups/Title',
-					'Author/Id'
-				)
-				.expand('OwnerGroups', 'Author')
-				.orderBy('Id', true)
-				.top(5000)(),
-
-			sp.web.lists
-				.getByTitle('Modules')
-				.items.select('Id', 'Title', 'Order0', 'Description', 'CourseId', 'Course/Id', 'DurationMinutes')
-				.expand('Course')
-				.orderBy('Order0', true)
-				.orderBy('Id', true)
-				.top(5000)(),
-
-			sp.web.lists
-				.getByTitle('Lessons')
-				.items.select('Id', 'Title', 'Order0', 'ContentTypeChoice', 'ContentUrl', 'HtmlContent', 'QuizJson', 'EstimatedMinutes', 'ModuleId', 'Module/Id')
-				.expand('Module')
-				.orderBy('ModuleId', true)
-				.orderBy('Order0', true)
-				.orderBy('Id', true)
-				.top(5000)()
-		]);
-
-		const mCourses: Course[] = courses.map((c: Course) => ({
-			Id: c.Id,
-			Title: c.Title,
-			Code: c.Code,
-			Description: c.Description,
-			DurationMinutes: c.DurationMinutes,
-			Level: c.Level,
-			Status: c.Status,
-			ThumbnailUrl: c.ThumbnailUrl,
-
-			VisibilityChoice: c.VisibilityChoice || 'MeOnly',
-			OwnerGroups: (c.OwnerGroups || []).map((g) => ({ Id: g.Id, Title: g.Title })),
-			OwnerGroupIds: (c.OwnerGroupIds || []).map((g: any) => g.Id)
-		}));
-
-		const mModules: Module[] = modules.map((m: Module) => ({
-			Id: m.Id,
-			Title: m.Title,
-			Order0: m.Order0,
-			Description: m.Description,
-			CourseId: m.Course && m.Course.Id ? m.Course.Id : m.CourseId,
-			DurationMinutes: m.DurationMinutes
-		}));
-
-		const mLessons: Lesson[] = lessons.map((l: Lesson) => ({
-			Id: l.Id,
-			Title: l.Title,
-			ContentTypeChoice: l.ContentTypeChoice as ContentKind,
-			ContentUrl: l.ContentUrl && (l.ContentUrl as any).Url ? (l.ContentUrl as any).Url : l.ContentUrl || '',
-			HtmlContent: l.HtmlContent,
-			QuizJson: l.QuizJson,
-			EstimatedMinutes: l.EstimatedMinutes,
-			Order0: l.Order0,
-			ModuleId: l.Module && l.Module.Id ? l.Module.Id : l.ModuleId
-		}));
-
-		this.setState({ courses: mCourses, modules: mModules, lessons: mLessons });
-	}
-
-	private buildCoursesDataSource(): DevExpress.data.DataSource {
-		return new DevExpress.data.DataSource({
-			store: new DevExpress.data.CustomStore<any, any>({
-				key: 'Id',
-				load: async () => this.state.courses,
-				byKey: (key: Id) => {
-					const id = normKey(key);
-					for (let i = 0; i < this.state.courses.length; i++) {
-						if (this.state.courses[i].Id === id) return Promise.resolve(this.state.courses[i]);
-					}
-					return Promise.reject('not found');
-				},
-				insert: (values: Partial<Course>) => {
-					return new Promise<number>((resolve) => {
-						const newRow: Course = { Title: '', Status: 'Draft', ...values } as Course;
-						newRow.Id = this.tempId();
-						this.setState(
-							(s) => ({
-								courses: s.courses.concat([newRow]),
-								newCourses: s.newCourses.concat([newRow])
-							}),
-							() => {
-								this.refreshLookups();
-								resolve(newRow.Id);
-							}
-						);
-					});
-				},
-				update: (key: Id, values: Partial<Course>) => {
-					return new Promise<void>((resolve, reject) => {
-						const id = normKey(key);
-						this.setState(
-							(s) => {
-								const idx = findIndexById(s.courses, id);
-								if (idx < 0) {
-									reject('not  found');
-									return null;
-								}
-								const updated: any = Object.assign({}, s.courses[idx], values);
-								const courses = s.courses.slice();
-								courses[idx] = updated;
-
-								const alreadyNew = findIndexById(s.newCourses, id) >= 0;
-								const updCourses = alreadyNew ? s.updCourses : upsertById(s.updCourses, updated);
-								return { courses, updCourses };
-							},
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				},
-				remove: (key: Id) => {
-					return new Promise<void>((resolve) => {
-						const id = normKey(key);
-						this.setState(
-							(s) => ({
-								courses: s.courses.filter((x) => x.Id !== id),
-								newCourses: s.newCourses.filter((x) => x.Id !== id),
-								updCourses: s.updCourses.filter((x) => x.Id !== id),
-								delCourses: id > 0 ? s.delCourses.concat([id]) : s.delCourses
-							}),
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				}
-			})
-		});
-	}
-
-	private buildModulesDataSource(): DevExpress.data.DataSource {
-		return new DevExpress.data.DataSource({
-			store: new DevExpress.data.CustomStore<any, any>({
-				key: 'Id',
-				load: async () => this.state.modules,
-				byKey: (key: Id) => {
-					const id = normKey(key);
-					for (let i = 0; i < this.state.modules.length; i++) {
-						if (this.state.modules[i].Id === id) return Promise.resolve(this.state.modules[i]);
-					}
-					return Promise.reject('not found');
-				},
-				insert: (values: Partial<Module>) => {
-					return new Promise<number>((resolve) => {
-						const newRow: Module = { Title: '', CourseId: 0, Order0: 0, ...values } as Module;
-						if (newRow.CourseId != null) newRow.CourseId = Number(newRow.CourseId);
-						newRow.Id = this.tempId();
-						this.setState(
-							(s) => ({
-								modules: s.modules.concat([newRow]),
-								newModules: s.newModules.concat([newRow])
-							}),
-							() => {
-								this.refreshLookups();
-								resolve(newRow.Id);
-							}
-						);
-					});
-				},
-				update: (key: Id, values: Partial<Module>) => {
-					return new Promise<void>((resolve, reject) => {
-						if (values.CourseId != null) values.CourseId = Number(values.CourseId);
-						const id = normKey(key);
-						this.setState(
-							(s) => {
-								const idx = findIndexById(s.modules, id);
-								if (idx < 0) {
-									reject('not  found');
-									return null;
-								}
-								if (idx < 0) return null;
-								const updated: any = Object.assign({}, s.modules[idx], values);
-								const modules = s.modules.slice();
-								modules[idx] = updated;
-
-								const alreadyNew = findIndexById(s.newModules, id) >= 0;
-								const updModules = alreadyNew ? s.updModules : upsertById(s.updModules, updated);
-								return { modules, updModules };
-							},
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				},
-				remove: (key: Id) => {
-					return new Promise<void>((resolve) => {
-						const id = normKey(key);
-						this.setState(
-							(s) => ({
-								modules: s.modules.filter((x) => x.Id !== id),
-								newModules: s.newModules.filter((x) => x.Id !== id),
-								updModules: s.updModules.filter((x) => x.Id !== id),
-								delModules: id > 0 ? s.delModules.concat([id]) : s.delModules
-							}),
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				}
-			})
-		});
-	}
-
-	private buildLessonsDataSource(): DevExpress.data.DataSource {
-		return new DevExpress.data.DataSource({
-			store: new DevExpress.data.CustomStore<any, any>({
-				key: 'Id',
-				load: () => Promise.resolve(this.state.lessons),
-				byKey: (key: Id) => {
-					const id = normKey(key);
-					for (let i = 0; i < this.state.lessons.length; i++) {
-						if (this.state.lessons[i].Id === id) return Promise.resolve(this.state.lessons[i]);
-					}
-					return Promise.reject('not found');
-				},
-				insert: (values: Partial<Lesson>) =>
-					new Promise<number>((resolve) => {
-						const newRow: Lesson = { Title: '', ModuleId: 0, Order0: 0, ContentTypeChoice: 'HTML', ...values } as Lesson;
-						if (newRow.ModuleId != null) newRow.ModuleId = Number(newRow.ModuleId);
-						newRow.Id = this.tempId();
-						this.setState(
-							(s) => ({
-								lessons: s.lessons.concat([newRow]),
-								newLessons: s.newLessons.concat([newRow])
-							}),
-							() => {
-								this.refreshLookups();
-								resolve(newRow.Id);
-							}
-						);
-					}),
-				update: (key: Id, values: Partial<Lesson>) => {
-					return new Promise<void>((resolve, reject) => {
-						if (values.ModuleId != null) values.ModuleId = Number(values.ModuleId);
-						const id = normKey(key);
-						this.setState(
-							(s) => {
-								const idx = findIndexById(s.lessons, id);
-								if (idx < 0) {
-									reject('not  found');
-									return null;
-								}
-								const updated: any = Object.assign({}, s.lessons[idx], values);
-								const lessons = s.lessons.slice();
-								lessons[idx] = updated;
-
-								const alreadyNew = findIndexById(s.newLessons, id) >= 0;
-								const updLessons = alreadyNew ? s.updLessons : upsertById(s.updLessons, updated);
-								return { lessons, updLessons };
-							},
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				},
-				remove: (key: Id) => {
-					return new Promise<void>((resolve) => {
-						const id = normKey(key);
-						this.setState(
-							(s) => ({
-								lessons: s.lessons.filter((x) => x.Id !== id),
-								newLessons: s.newLessons.filter((x) => x.Id !== id),
-								updLessons: s.updLessons.filter((x) => x.Id !== id),
-								delLessons: id > 0 ? s.delLessons.concat([id]) : s.delLessons
-							}),
-							() => {
-								this.refreshLookups();
-								resolve();
-							}
-						);
-					});
-				}
-			})
-		});
-	}
-
-	private buildAllGrids() {
-		// Courses grid
-		$(this.coursesGridRef).dxDataGrid({
-			dataSource: this.coursesDs,
-			showBorders: true,
-			height: 300,
-			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true, useIcons: true },
-			columns: [
-				{ dataField: 'Title', caption: 'Course Title', validationRules: [{ type: 'required' }] },
-				{ dataField: 'Code', caption: 'Code', width: 120 },
-				{ dataField: 'Level', caption: 'Level', lookup: { dataSource: ['Beginner', 'Intermediate', 'Advanced'] } },
-				{ dataField: 'Status', caption: 'Status', width: 120, lookup: { dataSource: ['Draft', 'Published'] } },
+				MIDAuthSignResponseDto data = null;
+				try
 				{
-					dataField: 'DurationMinutes',
-					caption: 'Duration (min)',
-					width: 140,
-					dataType: 'number',
-					cellTemplate: (container: DevExpress.core.ElementWrapper<HTMLElement>, options: DevExpress.ui.dxDataGrid.ColumnCellTemplateData<any, any>) => {
-						const courseId = options.data.Id;
-						const sum = this.computeCourseMinutes(courseId);
-						const val = Number(options.value) || 0;
-						const mismatch = val !== sum;
-						$('<div>')
-							.text(val)
-							.append(
-								$('<span>')
-									.css({ marginLeft: 6, fontSize: '12px', fontWeight: 700, color: mismatch ? '#b00020' : '#3a7' })
-									.text(mismatch ? ` (≠ ${sum})` : ` (= ${sum})`)
-							)
-							.appendTo(container);
-					}
-				},
-				{ dataField: 'ThumbnailUrl', caption: 'Thumbnail URL', width: 260 },
-				{
-					dataField: 'VisibilityChoice',
-					caption: 'Visibility',
-					width: 140,
-					lookup: {
-						dataSource: ['MeOnly', 'SelectGroups']
-					}
-				},
-				{
-					dataField: 'OwnerGroupIds',
-					caption: 'Groups',
-					width: 320,
-					visible: true,
-					calculateCellValue: (row) => (row.OwnerGroups ? row.OwnerGroups.map((g) => g.Title).join(', ') : ''),
-					editCellTemplate: (cellElement, cellInfo) => {
-						const $el = $('<div>');
-						$el.appendTo(cellElement);
-
-						$el.dxTagBox({
-							dataSource: this.state.siteGroups,
-							valueExpr: 'Id',
-							displayExpr: 'Title',
-							value: cellInfo.value || [],
-							searchEnabled: true,
-							showSelectionControls: true,
-							applyValueMode: 'useButtons',
-							onValueChanged: (
-								e: DevExpress.events.NativeEventInfo<DevExpress.ui.dxTagBox, Event | MouseEvent | PointerEvent | KeyboardEvent> & DevExpress.ui.Editor.ValueChangedInfo
-							) => {
-								cellInfo.setValue(e.value);
-							}
-						});
-					},
-					setCellValue: (rowData, value) => {
-						rowData.OwnerGroupIds = value;
-					},
-					editorOptions: {
-						disabled: false
-					}
-				},
-				{
-					type: 'buttons',
-					buttons: [
-						{ name: 'edit', hint: 'Edit Course', icon: 'fa fa-pen' },
-						{ name: 'save', hint: 'Save Course', icon: 'fa fa-save' },
-						{ name: 'cancel', hint: 'Cancel Course', icon: 'fa fa-times' },
-						{ name: 'delete', hint: 'Delete Course', icon: 'fa fa-trash' },
-						{
-							icon: 'fa fa-check-circle',
-							hint: 'Publish Course',
-							onClick: (e) => {
-								const id = e.row && e.row.data ? e.row.data.Id : 0;
-								if (!id || id < 1) {
-									alert('Please save the course first before publishing.');
-									return;
-								}
-								this.publishCourse(id);
-								this.applyCourseSecurity(id);
-							}
-						},
-						{
-							text: 'Preview',
-							icon: 'fa fa-eye',
-							hint: 'Preview Course',
-							onClick: (e) => {
-								const id = e.row && e.row.data ? e.row.data.Id : 0;
-								if (!id) return;
-								this.safeNavigate(() => {
-									const url = `${location.pathname}?previewCourse=1&courseId=${id}`;
-									window.location.href = url;
-								});
-							}
-						}
-					]
+					var root = JsonConvert.DeserializeObject<PaciCallbackRootDto>(rawJson);
+					data = root?.MIDAuthSignResponse;
 				}
-			],
-			onRowInserted: () => (this.modulesDs as any).reload(),
-			onRowUpdated: () => (this.modulesDs as any).reload(),
-			onRowRemoved: () => {
-				this.setState((s) => {
-					const keptModules = s.modules.filter((m) => s.courses.some((c) => c.Id === m.CourseId));
-					const keptLessons = s.lessons.filter((l) => keptModules.some((m) => m.Id === l.ModuleId));
-					return { modules: keptModules, lessons: keptLessons };
-				});
-				(this.modulesDs as any).reload();
-				(this.lessonsDs as any).reload();
-			},
-			onEditingStart: (e: DevExpress.ui.dxDataGrid.EditingStartEvent<any, any>) => {
-				if (e.data && e.data.Status === 'Published') {
-					e.cancel = true;
-					DevExpress.ui.notify('Published course are locked. Unpublish to edit.', 'warning', 2000);
-				}
-			},
-			onEditorPreparing(e) {
-				if (e.parentType !== 'dataRow') return;
-
-				if (e.dataField === 'OwnerGroupIds') {
-					const vis = (e && e.row && e.row.data && e.row.data.VisibilityChoice) || 'MeOnly';
-					e.editorOptions = e.editorOptions || {};
-					e.editorOptions.disabled = vis !== 'SelectGroups';
+				catch
+				{
+					_logger.LogReceived(null, rawJson);
+					return Ok();
 				}
 
-				if (e.dataField === 'VisibilityChoice') {
-					e.editorOptions = e.editorOptions || {};
-					e.editorOptions.onValueChanged = (args) => {
-						e.setValue(args.value);
-						const grid: DevExpress.ui.dxDataGrid = e.component;
-						if (args.value !== 'SelectGroups') {
-							const rowIndex = e.row.rowIndex;
-							grid.cellValue(rowIndex, 'OwnerGroupIds', []);
-						}
-						grid.repaint();
-					};
+				logItemId = _logger.LogReceived(data, rawJson);
+
+				if (data?.RequestDetails == null ||
+					string.IsNullOrWhiteSpace(data.RequestDetails.RequestId))
+				{
+					_logger.UpdateProcessingResult(
+						logItemId,
+						false,
+						null,
+						"Missing RequestDetails or RequestID"
+					);
+
+					return Ok();
 				}
+
+				string? resultCode = data.ResultDetails?.ResultCode;
+				var userAction = data.ResultDetails?.UserAction;
+
+				_logger.UpdateProcessingResult(logItemId, true, resultCode);
 			}
-		});
-
-		// Modules grid
-		$(this.modulesGridRef).dxDataGrid({
-			dataSource: this.modulesDs,
-			showBorders: true,
-			height: 320,
-			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true, useIcons: true },
-			columns: [
-				{ dataField: 'Title', caption: 'Module Title', validationRules: [{ type: 'required' }] },
+			catch (Exception ex)
+			{
+				try
 				{
-					dataField: 'CourseId',
-					caption: 'Course',
-					setCellValue(newData, value) {
-						newData.CourseId = value == null ? null : Number(value);
-					},
-					lookup: {
-						dataSource: this.state.courses,
-						valueExpr: 'Id',
-						displayExpr: 'Title'
-					},
-					width: 240,
-					validationRules: [{ type: 'required' }]
-				},
-				{ dataField: 'Order0', caption: 'Order', dataType: 'number', width: 100 },
-				{ dataField: 'Description', caption: 'Description' },
-				{
-					dataField: 'DurationMinutes',
-					caption: 'Duration (min)',
-					width: 140,
-					dataType: 'number',
-					cellTemplate: (container: DevExpress.core.ElementWrapper<HTMLElement>, options: any) => {
-						const moduleId = options.data.Id;
-						const sum = this.computeModuleMinutes(moduleId);
-						const val = Number(options.value) || 0;
-						const mismatch = val !== sum;
-						$('<div>')
-							.text(val)
-							.append(
-								$('<span>')
-									.css({ marginLeft: 6, fontSize: '12px', fontWeigth: 700, color: mismatch ? '#b00020' : '#3a7' })
-									.text(mismatch ? ` (≠ ${sum})` : ` (= ${sum})`)
-							)
-							.appendTo(container);
-					}
-				},
-				{
-					type: 'buttons',
-					buttons: [
-						{ name: 'edit', hint: 'Edit Module', icon: 'fa fa-pen' },
-						{ name: 'save', hint: 'Save Module', icon: 'fa fa-save' },
-						{ name: 'cancel', hint: 'Cancel Module', icon: 'fa fa-times' },
-						{ name: 'delete', hint: 'Delete Module', icon: 'fa fa-trash' }
-					]
-				}
-			],
-			onEditorPreparing: (e: DevExpress.ui.dxDataGrid.EditorPreparingEvent<any, any>) => {
-				if (e.parentType === 'dataRow' && e.dataField === 'CourseId') {
-					e.editorOptions = e.editorOptions || {};
-					e.editorOptions.dataSource = this.state.courses;
-					e.editorOptions.valueExpr = 'Id';
-					e.editorOptions.displayExpr = 'Title';
-					e.editorOptions.searchEnabled = true;
-					e.editorOptions.openOnFieldClick = true;
-				}
-			},
-			onRowInserted: () => (this.lessonsDs as any).reload(),
-			onRowUpdated: () => (this.lessonsDs as any).reload(),
-			onRowRemoved: () => {
-				this.setState((s) => {
-					const keptLessons = s.lessons.filter((l) => s.modules.some((m) => m.Id === l.ModuleId));
-					return { lessons: keptLessons };
-				});
-				(this.lessonsDs as any).reload();
-			}
-		});
-
-		// Lessons grid
-		$(this.lessonsGridRef).dxDataGrid({
-			dataSource: this.lessonsDs,
-			width: '100%',
-			wordWrapEnabled: true,
-			showBorders: true,
-			height: 360,
-			columnAutoWidth: false,
-			scrolling: { mode: 'standard' },
-			editing: { mode: 'row', allowAdding: true, allowUpdating: true, allowDeleting: true, useIcons: true },
-			rowDragging: {
-				allowReordering: true,
-				onReorder: (e) => {
-					const from = e.fromIndex,
-						to = e.toIndex;
-					const all = this.state.lessons.slice();
-					const row = all.splice(from, 1)[0];
-					all.splice(to, 0, row);
-
-					for (let i = 0; i < all.length; i++) all[i].Order0 = i + 1;
-
-					this.setState((s) => ({
-						lessons: all,
-						updLessons: all.reduce((acc, l) => upsertById(acc, l), s.updLessons)
-					}));
-
-					e.component.refresh();
-				}
-			},
-			summary: {
-				totalItems: [
+					if (logItemId > 0)
 					{
-						column: 'EstimatedMinutes',
-						summaryType: 'sum',
-						displayFormat: 'Total: {0}'
+						_logger.UpdateProcessingResult(
+							logItemId,
+							false,
+							null,
+							ex.Message
+						);
 					}
-				]
-			},
-			columns: [
-				{ dataField: 'Title', caption: 'Lesson Title', validationRules: [{ type: 'required' }] },
-				{
-					dataField: 'ModuleId',
-					caption: 'Module',
-					lookup: {
-						dataSource: this.state.modules,
-						valueExpr: 'Id',
-						// displayExpr: 'Title'
-						displayExpr: (m: Module) => {
-							if (!m) return '';
-							const mins = this.computeModuleMinutes(m.Id);
-							return mins ? `${m.Title} - (${mins} mins)` : m.Title;
-						}
-					},
-					width: 240,
-					validationRules: [{ type: 'required' }],
-					setCellValue(newData, value) {
-						newData.ModuleId = value == null ? null : Number(value);
+					else
+					{
+						_logger.LogReceived(null, rawJson);
 					}
-				},
-				{ dataField: 'Order0', caption: 'Order', dataType: 'number', width: 90 },
-				{
-					dataField: 'ContentTypeChoice',
-					caption: 'Type',
-					width: 120,
-					lookup: { dataSource: ['PDF', 'PPT', 'Video', 'Audio', 'Link', 'HTML', 'Quiz'] }
-				},
-				{
-					dataField: 'ContentUrl',
-					caption: 'Content URL',
-					width: 280,
-					visible: true,
-					cellTemplate: (container: any, options: any) => {
-						const el: HTMLElement = container && container.get ? container.get(0) : container;
-
-						while (el.firstChild) el.removeChild(el.firstChild);
-						const url = String(options.value || '').trim();
-						if (!url) return;
-
-						const a = document.createElement('a');
-						a.href = url;
-						a.target = '_blank';
-						a.title = url;
-						a.textContent = url;
-						a.style.display = 'inline-block';
-						a.style.maxWidth = '100%';
-						a.style.whiteSpace = 'normal';
-						(a.style as any).wordBreak = 'break-word';
-						(a.style as any).overflowWrap = 'anywhere';
-						el.appendChild(a);
-					}
-				},
-				{ dataField: 'EstimatedMinutes', caption: 'Est. (min)', dataType: 'number', width: 110 },
-				{
-					type: 'buttons',
-					buttons: [
-						{ name: 'edit', hint: 'Edit Lesson', icon: 'fa fa-pen' },
-						{ name: 'save', hint: 'Save Lesson', icon: 'fa fa-save' },
-						{ name: 'cancel', hint: 'Cancel Lesson', icon: 'fa fa-times' },
-						{ name: 'delete', hint: 'Delete Lesson', icon: 'fa fa-trash' },
-						{
-							hint: 'Edit HTML',
-							text: 'Lesson Edit',
-							icon: 'fa fa-code',
-							visible: (e) => e.row && e.row.data && e.row.data.ContentTypeChoice === 'HTML',
-							onClick: (e) => {
-								const id = e.row.data.Id;
-								this.openHtmlEditor(id);
-								// const returnUrl = encodeURIComponent(window.location.href);
-								// const url = `${location.pathname}?editHtml=1&lessonId=${id}&returnUrl=${returnUrl}`;
-								// window.open(url, '_blank');
-							}
-						},
-						{
-							icon: 'fa fa-question-circle',
-							hint: 'Edit Quiz',
-							visible: (e) => e.row && e.row.data && e.row.data.ContentTypeChoice === 'Quiz',
-							onClick: (e) => {
-								this.openQuizEditor(e.row.data.Id);
-							}
-						},
-						{
-							hint: 'Upload file to library and set URL',
-							icon: 'fa fa-upload',
-							text: 'Upload',
-							visible: (e) => {
-								const data = e && e.row && e.row.data;
-								if (!data || data.Id < 1) return false;
-								const t = String(data.ContentTypeChoice || '').toUpperCase();
-								return t === 'PDF' || t === 'PPT' || t === 'VIDEO' || t === 'AUDIO';
-							},
-							onClick: (e) => {
-								const lessonId = e && e.row && e.row.data ? e.row.data.Id : 0;
-								if (!lessonId) return;
-								this.openUploadForLesson(lessonId);
-							}
-						}
-					]
 				}
-			],
-			onEditorPreparing: (e: DevExpress.ui.dxDataGrid.EditorPreparingEvent<any, any>) => {
-				if (e.parentType === 'dataRow' && e.dataField === 'ContentUrl') {
-					const ct = (e.row && e.row.data && e.row.data.ContentTypeChoice) || 'HTML';
-					e.editorOptions = e.editorOptions || {};
-					e.editorOptions.disabled = ct === 'HTML' || ct === 'Quiz';
-				}
-				if (e.parentType === 'dataRow' && e.dataField === 'HTMLContent') {
-					const ct = (e.row && e.row.data && e.row.data.ContentTypeChoice) || 'HTML';
-					e.cancel = ct !== 'HTML';
-				}
-				if (e.parentType === 'dataRow' && e.dataField === 'ModuleId') {
-					e.editorOptions = e.editorOptions || {};
-					e.editorOptions.dataSource = this.state.modules;
-					e.editorOptions.valueExpr = 'Id';
-					e.editorOptions.displayExpr = (m: Module) => {
-						if (!m) return '';
-						const mins = this.computeModuleMinutes(m.Id);
-						return mins ? `${m.Title} - (${mins} mins)` : m.Title;
-					};
-					e.editorOptions.searchEnabled = true;
-					e.editorOptions.openOnFieldClick = true;
-					e.editorOptions.itemTemplate = (item: Module) => {
-						const mins = this.computeModuleMinutes(item.Id);
-						const el = document.createElement('div');
-						el.textContent = mins ? `${item.Title} - (${mins} mins)` : item.Title;
-
-						return el;
-					};
-				}
+				catch
+				{ }
+				return Ok();
 			}
-		});
+
+			return Ok();
+		}
 	}
+}
 
-	private commitAllEdits = async () => {
-		const trySave = async (ref: HTMLDivElement) => {
-			const inst: any = $(ref).dxDataGrid('instance');
-			if (inst && typeof inst.saveEditData === 'function') {
-				const r = inst.saveEditData();
-				if (r && typeof r.then === 'function') await r;
-			}
-		};
-		await trySave(this.coursesGridRef);
-		await trySave(this.modulesGridRef);
-		await trySave(this.lessonsGridRef);
-	};
+======================================
 
-	private onSave = async () => {
-		const sp = getSP(this.props.context);
+using Microsoft.SharePoint;
+using System;
+using System.Configuration;
+using webApi.Models.Floward;
+using webApi.Models.PACI;
 
-		try {
-			this.setState({ saving: true });
-			await this.commitAllEdits();
+namespace webApi.Services.Floward
+{
+	public interface IPaciAuthCallbackLogger
+	{
+		int LogReceived(MIDAuthSignResponseDto data, string rawJson);
+		void UpdateProcessingResult(int itemId, bool success,string? resultCode, string errorMessage = null);
+	}
+	public class PaciAuthCallbackLogger : IPaciAuthCallbackLogger
+	{
+		private readonly string _siteUrl;
+		private readonly string _listName = "PaciAuthCallbackLog";
 
-			const coursesList = sp.web.lists.getByTitle('Courses');
-			const addCoursePromises: Promise<any>[] = [];
-			const courseTempToReal: Record<number, number> = {};
+		public PaciAuthCallbackLogger()
+		{
+			_siteUrl = ConfigurationManager.AppSettings["PaciAuthCallbackLogSiteUrl"];
+			_listName = ConfigurationManager.AppSettings["PaciAuthCallbackLogListName"];
 
-			for (const c of this.state.newCourses) {
-				addCoursePromises.push(
-					coursesList.items
-						.add({
-							Title: c.Title,
-							Code: c.Code,
-							Description: c.Description,
-							DurationMinutes: c.DurationMinutes,
-							Level: c.Level,
-							Status: c.Status,
-							ThumbnailUrl: c.ThumbnailUrl,
-
-							VisibilityChoice: c.VisibilityChoice || 'MeOnly',
-							OwnerGroupsId: { results: c.OwnerGroupIds || [] }
-						})
-						.then((res) => {
-							courseTempToReal[(c.Id as any) as number] = res.data.Id;
-							this.applyCourseSecurity(res.data.Id);
-						})
-				);
-			}
-			await Promise.all(addCoursePromises);
-
-			const stagedNewModules = this.state.newModules.map((m) => {
-				const isTempParent = (m.CourseId as any) < 0;
-				return isTempParent ? { ...m, CourseId: courseTempToReal[(m.CourseId as any) as number] } : m;
-			});
-
-			const modulesList = sp.web.lists.getByTitle('Modules');
-			const addModulePromises: Promise<any>[] = [];
-			const moduleTempToReal: Record<number, number> = {};
-
-			for (const m of stagedNewModules) {
-				addModulePromises.push(
-					modulesList.items
-						.add({
-							Title: m.Title,
-							Order0: m.Order0,
-							Description: m.Description,
-							CourseId: m.CourseId,
-							DurationMinutes: this.computeModuleMinutes(0)
-						})
-						.then((res) => {
-							moduleTempToReal[(m.Id as any) as number] = res.data.Id;
-						})
-				);
-			}
-			await Promise.all(addModulePromises);
-
-			const stagedNewLessons = this.state.newLessons.map((l) => {
-				const isTempParent = (l.ModuleId as any) < 0;
-				return isTempParent ? { ...l, ModuleId: moduleTempToReal[(l.ModuleId as any) as number] } : l;
-			});
-
-			const lessonsList = sp.web.lists.getByTitle('Lessons');
-			const addLessonPromises: Promise<any>[] = [];
-
-			for (const l of stagedNewLessons) {
-				const cleanHtml = sanitizeHtml(l.HtmlContent);
-				addLessonPromises.push(
-					lessonsList.items.add({
-						Title: l.Title,
-						Order0: l.Order0,
-						ContentTypeChoice: l.ContentTypeChoice,
-						ContentUrl: toFieldUrlValue(l.ContentUrl),
-						HtmlContent: cleanHtml,
-						QuizJson: l.QuizJson,
-						EstimatedMinutes: l.EstimatedMinutes,
-						ModuleId: l.ModuleId
-					})
-				);
-			}
-			await Promise.all(addLessonPromises);
-
-			const updCoursePromises: Promise<any>[] = [];
-			for (const c of this.state.updCourses) {
-				if (!c.Id || c.Id < 1) continue;
-				updCoursePromises.push(
-					coursesList.items.getById(c.Id).update({
-						Title: c.Title,
-						Code: c.Code,
-						Description: c.Description,
-						DurationMinutes: c.DurationMinutes,
-						Level: c.Level,
-						Status: c.Status,
-						ThumbnailUrl: c.ThumbnailUrl,
-
-						VisibilityChoice: c.VisibilityChoice || 'MeOnly',
-						OwnerGroupsId: { results: c.OwnerGroupIds || [] }
-					})
-				);
-				this.applyCourseSecurity(c.Id);
-			}
-
-			const updModulePromises: Promise<any>[] = [];
-			for (const m0 of this.state.updModules) {
-				if (!m0.Id || m0.Id < 1) continue;
-				const m = (m0.CourseId as any) < 0 ? { ...m0, CourseId: courseTempToReal[(m0.CourseId as any) as number] } : m0;
-
-				updModulePromises.push(
-					modulesList.items.getById(m.Id!).update({
-						Title: m.Title,
-						Order0: m.Order0,
-						Description: m.Description,
-						CourseId: m.CourseId,
-						DurationMinutes: this.computeModuleMinutes(m.Id!)
-					})
-				);
-			}
-
-			const updLessonPromises: Promise<any>[] = [];
-			for (const l0 of this.state.updLessons) {
-				if (!l0.Id || l0.Id < 1) continue;
-				const cleanHtml = sanitizeHtml(l0.HtmlContent);
-				const l = (l0.ModuleId as any) < 0 ? { ...l0, ModuleId: moduleTempToReal[(l0.ModuleId as any) as number] } : l0;
-
-				updLessonPromises.push(
-					lessonsList.items.getById(l.Id!).update({
-						Title: l.Title,
-						Order0: l.Order0,
-						ContentTypeChoice: l.ContentTypeChoice,
-						ContentUrl: toFieldUrlValue(l.ContentUrl),
-						HtmlContent: cleanHtml,
-						QuizJson: l.QuizJson,
-						EstimatedMinutes: l.EstimatedMinutes,
-						ModuleId: l.ModuleId
-					})
-				);
-			}
-
-			await Promise.all([...updCoursePromises, ...updModulePromises, ...updLessonPromises]);
-
-			const delLessonPromises = this.state.delLessons.map((id) => lessonsList.items.getById(id).delete());
-			await Promise.all(delLessonPromises);
-
-			const delModulePromises = this.state.delModules.map((id) => modulesList.items.getById(id).delete());
-			await Promise.all(delModulePromises);
-
-			const delCoursePromises = this.state.delCourses.map((id) => coursesList.items.getById(id).delete());
-			await Promise.all(delCoursePromises);
-
-			await this.loadAll();
-			const mg: any = $(this.modulesGridRef).dxDataGrid('instance');
-			if (mg) {
-				mg.columnOption('CourseId', 'lookup.dataSource', this.state.courses);
-				mg.repaint();
-			}
-			const lg: any = $(this.lessonsGridRef).dxDataGrid('instance');
-			if (lg) {
-				lg.columnOption('ModuleId', 'lookup.dataSource', this.state.modules);
-				lg.repaint();
-			}
-
-			// clear diffs
-			this.setState({
-				saving: false,
-				newCourses: [],
-				updCourses: [],
-				delCourses: [],
-				newModules: [],
-				updModules: [],
-				delModules: [],
-				newLessons: [],
-				updLessons: [],
-				delLessons: []
-			});
-			this._skipNextBeforeUnload = true;
-			alert('Saved successfully.');
-		} catch (e) {
-			this.setState({ saving: false });
-			alert('Save failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
-		}
-	};
-
-	private refreshLookups = () => {
-		const mg: DevExpress.ui.dxDataGrid = $(this.modulesGridRef).dxDataGrid('instance');
-		if (mg) {
-			mg.columnOption('CourseId', 'lookup.dataSource', this.state.courses);
-			mg.repaint();
+			if (string.IsNullOrEmpty(_siteUrl))
+				throw new ConfigurationErrorsException("Missing appSettings: PaciAuthCallbackLogSiteUrl");
 		}
 
-		const lg: DevExpress.ui.dxDataGrid = $(this.lessonsGridRef).dxDataGrid('instance');
-		if (lg) {
-			lg.columnOption('ModuleId', 'lookup.dataSource', this.state.modules);
-			lg.repaint();
-		}
-	};
+		public int LogReceived(MIDAuthSignResponseDto data, string rawJson)
+		{
+			if (data?.RequestDetails == null)
+				throw new ArgumentException("Invalid PACI callback data");
 
-	private openHtmlEditor = (lessonId: number) => {
-		DevExpress.ui.dxOverlay.baseZIndex(20000);
-		this.setState({ htmlPopupVisible: true, editingLessonId: lessonId });
-	};
+			int itemId = 0;
 
-	private closeHtmlEditor = () => {
-		this.setState({ htmlPopupVisible: false, editingLessonId: undefined }, () => {
-			DevExpress.ui.dxOverlay.baseZIndex(1500);
-		});
-	};
+			SPSecurity.RunWithElevatedPrivileges(() =>
+			{
+				using (var site = new SPSite(_siteUrl))
+				using (var web = site.OpenWeb())
+				{
+					web.AllowUnsafeUpdates = true;
 
-	private onHtmlSaved = () => {
-		this.lessonsDs.reload();
-		this.closeHtmlEditor();
-	};
+					var list = web.Lists[_listName];
+					var item = list.Items.Add();
 
-	private computeCourseMinutes = (courseId: number) => {
-		const moduleIds = this.state.modules.filter((m) => m.CourseId === courseId).map((m) => m.Id);
-		const total = this.state.lessons.filter((l) => moduleIds.indexOf(l.ModuleId) >= 0).reduce((sum, l) => sum + (Number(l.EstimatedMinutes) || 0), 0);
-		return total;
-	};
+					var req = data.RequestDetails;
+					var res = data.ResultDetails;
 
-	private computeModuleMinutes = (moduleId: number) => {
-		const total = this.state.lessons.filter((l) => l.ModuleId === moduleId).reduce((sum, l) => sum + (Number(l.EstimatedMinutes) || 0), 0);
-		return total;
-	};
+					item["Title"] = Safe(req.RequestId);
+					item["RequestId"] = Safe(req.RequestId);
+					item["RequestType"] = Safe(req.RequestType);
+					item["ServiceProviderId"] = Safe(req.ServiceProviderId);
+					item["CivilNo"] = Safe(req.CivilNo);
 
-	private validateCourse = (courseId: number): { ok: boolean; issues: string[]; computedMinutes: number } => {
-		const issues: string[] = [];
-		const c = this.state.courses.find((x) => x.Id === courseId);
-		if (!c) return { ok: false, issues: ['Course not found in current state.'], computedMinutes: 0 };
+					if (res != null)
+					{
+						var resultCode = item["ResultCode"] != null ? Convert.ToInt32(item["ResultCode"]) : (int?)null;
 
-		const mods = this.state.modules.filter((m) => m.CourseId === courseId);
-		if (mods.length === 0) issues.push('No modules under this course.');
-		const modIdSet = new Set(mods.map((m) => m.Id));
-
-		const lessons = this.state.lessons.filter((l) => modIdSet.has(l.ModuleId));
-		const lessonsByMod = new Map<number, number>();
-		for (const l of lessons) {
-			lessonsByMod.set(l.ModuleId, (lessonsByMod.get(l.ModuleId) || 0) + 1);
-		}
-
-		for (const m of mods) {
-			if (!lessonsByMod.get(m.Id)) {
-				issues.push(`Module "${m.Title}" has no lessons.`);
-			}
-		}
-
-		const byModule: Record<number, Lesson[]> = {};
-		for (const l of lessons) {
-			(byModule[l.ModuleId] = byModule[l.ModuleId] || []).push(l);
-		}
-		for (const m of mods) {
-			const computed = this.computeModuleMinutes(m.Id);
-			if ((Number(m.DurationMinutes) || 0) !== computed) {
-				issues.push(`Module "${m.Title}" duration mismatch: Module=${m.DurationMinutes || 0} vs Sum of lessons=${computed}.`);
-			}
-			const list: Lesson[] = (byModule[m.Id] || []).slice().sort((a, b) => (Number(a.Order0) || 0) - (Number(b.Order0) || 0));
-			const hasQuiz = list.some((x) => String(x.ContentTypeChoice || '').toUpperCase() === 'QUIZ');
-
-			if (REQUIRE_QUIZ_PER_MODULE && !hasQuiz) {
-				issues.push(`Module "${m.Title}" has no Quiz lesson.`);
-			}
-
-			if (REQUIRE_QUIZ_AFTER_EACH_LESSON) {
-				for (let i = 0; i < list.length; i++) {
-					const cur = list[i];
-					const kind = String(cur.ContentTypeChoice || '').toUpperCase();
-					if (kind !== 'QUIZ') {
-						const next = i < list.length - 1 ? list[i + 1] : undefined;
-						const nextIsQuiz = next && String(next.ContentTypeChoice || '').toUpperCase() === 'QUIZ';
-						if (!nextIsQuiz) {
-							issues.push(`Module "${m.Title}": lesson "${cur.Title}" must be immediately followed by a Quiz.`);
-						}
+						item["ResultCode"] = resultCode;
+						item["ResultDescription"] = DescribeCode(resultCode);
+						item["UserAction"] = res.UserAction;
+						item["UserCivilNo"] = Safe(res.UserCivilNo);
 					}
+
+					item["RawJson"] = rawJson;
+					item["IsProcessed"] = false;
+					item["ProcessedOn"] = null;
+					item["ErrorMessage"] = null;
+
+					item.Update();
+
+					itemId = item.ID;
+					web.AllowUnsafeUpdates = false;
 				}
-			}
+			});
+
+			return itemId;
 		}
 
-		for (const l of lessons) {
-			const t = String(l.ContentTypeChoice || 'HTML').toUpperCase();
+		public void UpdateProcessingResult(int itemId, bool success,string? resultCode, string errorMessage = null)
+		{
+			if (itemId <= 0)
+				return;
 
-			if (t === 'HTML') {
-				const html = (l.HtmlContent || '').trim();
-				if (!html) issues.push(`Lesson "${l.Title}" (HTML) has empty content.`);
-			} else if (t === 'QUIZ') {
-				try {
-					const q = l.QuizJson ? JSON.parse(l.QuizJson) : null;
-					if (!q || !Array.isArray(q.questions) || q.questions.length === 0) {
-						issues.push(`Lesson "${l.Title}" (Quiz) has no questions.`);
-					}
-				} catch {
-					issues.push(`Lesson "${l.Title}" (Quiz) has invalid QuizJson.`);
+			SPSecurity.RunWithElevatedPrivileges(() =>
+			{
+				using (var site = new SPSite(_siteUrl))
+				using (var web = site.OpenWeb())
+				{
+					web.AllowUnsafeUpdates = true;
+
+					var list = web.Lists[_listName];
+					var item = list.GetItemById(itemId);
+
+					item["IsProcessed"] = success;
+					item["ProcessedOn"] = DateTime.Now;
+					item["ResultCode"] = resultCode;
+					item["ResultDescription"] = DescribeCode(resultCode);
+					item["ErrorMessage"] = success ? null : (errorMessage ?? "Unknown error");
+
+					item.Update();
+					web.AllowUnsafeUpdates = false;
 				}
-			} else {
-				if (!l.ContentUrl) issues.push(`Lesson "${l.Title}" (${t}) missing Content URL.`);
-			}
+			});
 		}
 
-		const orderByMod: Record<number, number[]> = {};
-		for (const l of lessons) {
-			(orderByMod[l.ModuleId] = orderByMod[l.ModuleId] || []).push(Number(l.Order0) || 0);
-		}
-		for (const m of mods) {
-			const arr = (orderByMod[m.Id] || []).slice().sort((a, b) => a - b);
-			for (let i = 0; i < arr.length; i++) {
-				if (arr[i] !== i + 1) {
-					issues.push(`Module "${m.Title}" lesson order has gaps (expected 1..N).`);
+		public string DescribeCode(int? code)
+		{
+			var describe = "";
+			switch (code)
+			{
+				case 10:
+					describe = "Authenticated";
 					break;
-				}
+				case 20:
+					describe = "User certificate is revoked";
+					break;
+				case 30:
+					describe = "Failed to verify";
+					break;
+				case 40:
+					describe = "Declined";
+					break;
+				case 50:
+					describe = "Certificate Expired";
+					break;
+				default:
+					describe = null;
+					break;
+			}
+			return describe;
+		}
+		private static string Safe(string s) => string.IsNullOrEmpty(s) ? string.Empty : s;
+	}
+}		
+
+=============================
+using Newtonsoft.Json;
+
+namespace webApi.Models.PACI
+{
+	public class PaciInitiateAuthRequestDto
+	{
+		public string CivilNo { get; set; }
+		public string AssuranceLevel { get; set; }
+		public string ServiceDescriptionEN { get; set; }
+		public string ServiceDescriptionAR { get; set; }
+		public string AdditionalData { get; set; }
+		public string Challenge { get; set; }
+	}
+
+	public class PaciInitiateAuthResponseDto
+	{
+		public string RequestId { get; set; }
+		public string QRCodeImageBase64 { get; set; }
+	}
+
+	public class PaciCallbackRootDto
+	{
+		[JsonProperty("MIDAuthSignResponse")]
+		public MIDAuthSignResponseDto MIDAuthSignResponse { get; set; }
+	}
+
+	public class MIDAuthSignResponseDto
+	{
+		[JsonProperty("RequestDetails")]
+		public RequestDetailsDto RequestDetails { get; set; }
+
+		[JsonProperty("ResultDetails")]
+		public ResultDetailsDto ResultDetails { get; set; }
+
+		[JsonProperty("PersonalData")]
+		public PaciPersonalDataDto PersonalData { get; set; }
+
+		[JsonProperty("Signature")]
+		public PaciSignatureDto Signature { get; set; }
+	}
+	public class RequestDetailsDto
+	{
+		[JsonProperty("requestId")]
+		public string RequestId { get; set; }
+
+		[JsonProperty("requestType")]
+		public string RequestType { get; set; }
+
+		[JsonProperty("serviceProviderId")]
+		public string ServiceProviderId { get; set; }
+
+		[JsonProperty("civilNo")]
+		public string CivilNo { get; set; }
+	}
+	public class ResultDetailsDto
+	{
+		[JsonProperty("resultCode")]
+		public string ResultCode { get; set; }
+
+		[JsonProperty("UserAction")]
+		public string UserAction { get; set; }
+
+		[JsonProperty("UserCivilNo")]
+		public string UserCivilNo { get; set; }
+
+		[JsonProperty("UserCertificate")]
+		public string UserCertificate { get; set; }
+
+		[JsonProperty("SignatureData")]
+		public string SignatureData { get; set; }
+
+		[JsonProperty("HashAlgorithm")]
+		public string HashAlgorithm { get; set; }
+
+		[JsonProperty("SigningDatatype")]
+		public string SigningDatatype { get; set; }
+
+		[JsonProperty("TransactionDate")]
+		public string TransactionDate { get; set; }
+
+		[JsonIgnore]
+		public int? ResultCodeInt
+		{
+			get
+			{
+				if (int.TryParse(ResultCode, out var v))
+					return v;
+				return null;
 			}
 		}
 
-		const computedMinutes = this.computeCourseMinutes(courseId);
-		if ((Number(c.DurationMinutes) || 0) !== computedMinutes) {
-			issues.push(`Duration mismatch: Course=${c.DurationMinutes || 0} vs Sum of lessons=${computedMinutes}.`);
-		}
-
-		return { ok: issues.length === 0, issues, computedMinutes };
-	};
-
-	private publishCourse = async (courseId: number) => {
-		const sp = getSP(this.props.context);
-
-		try {
-			await this.commitAllEdits();
-
-			const res = this.validateCourse(courseId);
-			if (!res.ok) {
-				const otherIssues = res.issues.filter((i) => (i.indexOf('Duration mismatch:') !== 0 ? true : false));
-				if (otherIssues.length > 0) {
-					alert('Cannot publish:\n\n' + res.issues.map((x) => '• ' + x).join('\n'));
-					return;
-				}
-
-				const fix = confirm(
-					`Duration mismatch.\n\nCourse Duration: ${this.state.courses.find((c) => c.Id === courseId).DurationMinutes || 0}\nSum of Lessons: ${res.computedMinutes}\n\n` +
-						`Click OK to auto-update Course Duration to ${res.computedMinutes} and publish.\nClick Cancel to abort.`
-				);
-				if (!fix) return;
-
-				await sp.web.lists.getByTitle('Courses').items.getById(courseId).update({
-					DurationMinutes: res.computedMinutes
-				});
-			}
-
-			const modulesUnderCourse = this.state.modules.filter((mm) => mm.CourseId === courseId);
-			const modulesList = sp.web.lists.getByTitle('Modules');
-			await Promise.all(
-				modulesUnderCourse.map(async (mm) => {
-					const computed = this.computeModuleMinutes(mm.Id);
-					if ((Number(mm.DurationMinutes) || 0) !== computed) {
-						await modulesList.items.getById(mm.Id).update({ DurationMinutes: computed });
-					}
-				})
-			);
-
-			await sp.web.lists.getByTitle('Courses').items.getById(courseId).update({
-				Status: 'Published'
-			});
-
-			await this.loadAll();
-
-			const mg: any = $(this.modulesGridRef).dxDataGrid('instance');
-			if (mg) {
-				mg.columnOption('CourseId', 'lookup.dataSource', this.state.courses);
-				mg.repaint();
-			}
-			const lg: any = $(this.lessonsGridRef).dxDataGrid('instance');
-			if (lg) {
-				lg.columnOption('ModuleId', 'lookup.dataSource', this.state.modules);
-				lg.repaint();
-			}
-
-			alert('Course published successfully.');
-		} catch (e) {
-			alert('Publish failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
-		}
-	};
-
-	private openQuizEditor = (lessonId: number) => {
-		this.setState({ quizPopupVisible: true, editingLessonId: lessonId }); // we are testing bit bucket
-	};
-
-	private closeQuizEditor = () => {
-		this.setState({ quizPopupVisible: false, editingLessonId: undefined });
-	};
-
-	private onQuizSaved = () => {
-		this.lessonsDs.reload();
-		this.closeQuizEditor();
-	};
-
-	private openUploadForLesson = (lessonId: number) => {
-		const input = document.createElement('input');
-		input.type = 'file';
-		input.accept = '*/*';
-		input.onchange = async () => {
-			if (!input.files || !input.files.length) return;
-			try {
-				const file = input.files[0];
-				const { absoluteUrl } = await this.uploadToLibrary(file, lessonId);
-
-				this.setState(
-					(s) => {
-						const idx = s.lessons.findIndex((l) => l.Id === lessonId);
-						if (idx < 0) return s as any;
-						const updated = { ...s.lessons[idx], ContentUrl: absoluteUrl };
-						const lessons = s.lessons.slice();
-						lessons[idx] = updated;
-						const updLessons = upsertById(s.updLessons, updated);
-						return { lessons, updLessons } as any;
-					},
-					() => {
-						this.lessonsDs.reload();
-						const grid: DevExpress.ui.dxDataGrid = $(this.lessonsGridRef).dxDataGrid('instance');
-						if (grid) grid.refresh();
-					}
-				);
-
-				DevExpress.ui.notify('File uploaded and URL set.', 'success', 2000);
-			} catch (err) {
-				const msg = err && (err as any).message ? (err as any).message : String(err);
-				DevExpress.ui.notify('Upload failed: ' + msg, 'error', 4000);
-			}
-		};
-		input.click();
-	};
-
-	private onFilePicked = async (ev: React.ChangeEvent<HTMLInputElement>) => {
-		const files = ev.target && ev.target.files ? ev.target.files : null;
-		if (!files || files.length === 0) return;
-
-		const file = files[0];
-		const lessonId = this.pendingUploadLessonId;
-		this.pendingUploadLessonId = null;
-
-		if (!lessonId) return;
-
-		try {
-			this.isUploading = true;
-			const uploaded = await this.uploadToLibrary(file, lessonId);
-
-			this.setState(
-				(s) => {
-					const idx = findIndexById(s.lessons, lessonId);
-					if (idx < 0) return null;
-
-					const updated = Object.assign({}, s.lessons[idx]);
-					updated.ContentUrl = uploaded.absoluteUrl;
-
-					if (AUTO_SET_TYPE_FROM_EXTENSION) {
-						const kind = this.kindFromFilename(file.name);
-						if (kind) updated.ContentTypeChoice = kind as any;
-					}
-
-					const lessons = s.lessons.slice();
-					lessons[idx] = updated;
-
-					const updLessons = upsertById(s.updLessons, updated);
-					return { lessons, updLessons } as any;
-				},
-				() => {
-					const lg: DevExpress.ui.dxDataGrid = $(this.lessonsGridRef).dxDataGrid('instance');
-					this.lessonsDs.reload();
-					if (lg) lg.refresh();
-					DevExpress.ui.notify('File uploaded and lesson updated. Click "Save changes" to persist.', 'success', 2000);
-				}
-			);
-		} catch (e) {
-			alert('Upload failed: ' + (e && (e as any).message ? (e as any).message : String(e)));
-		} finally {
-			this.isUploading = false;
-		}
-	};
-
-	private kindFromFilename(name: string): string | null {
-		const dot = name.lastIndexOf('.');
-		if (dot < 0) return null;
-		const ext = name.substring(dot).toLowerCase();
-		return EXT_TO_KIND[ext] || null;
-	}
-
-	private async getCourseAssetsRoot() {
-		const sp = getSP(this.props.context);
-		const rootFolder = sp.web.getFolderByServerRelativePath(COURSE_ASSETS_LIB);
-		const meta = await rootFolder.select('ServerRelativeUrl')();
-		const libSrvRel: string = meta.ServerRelativeUrl;
-		return { rootFolder, libSrvRel };
-	}
-
-	private async ensureNestedFolder(parent: any, segments: string[]): Promise<any> {
-		let current = parent;
-		for (let i = 0; i < segments.length; i++) {
-			const seg = (segments[i] || '').trim();
-			if (!seg) continue;
-			try {
-				const child = current.folders.getByName(seg);
-				await child.select('ServerRelativeUrl')();
-				current = child;
-			} catch {
-				await current.folders.addUsingPath(seg);
-				current = current.folders.getByName(seg);
+		[JsonIgnore]
+		public int? UserActionInt
+		{
+			get
+			{
+				if (int.TryParse(UserAction, out var v))
+					return v;
+				return null;
 			}
 		}
-		return current;
 	}
+	public class PaciPersonalDataDto
+	{
+		[JsonProperty("CivilID")]
+		public string CivilId { get; set; }
 
-	private buildLessonFolderSegments(lessonId: number): string[] {
-		if (!NEST_BY_COURSE_AND_MODULE) return [];
-		const lesson = this.state.lessons.find((l) => l.Id === lessonId);
-		if (!lesson) return [];
-		const mod = this.state.modules.find((m) => m.Id === lesson.ModuleId);
-		const courseId = mod && typeof mod.CourseId === 'number' ? mod.CourseId : null;
+		[JsonProperty("FullNameAr")]
+		public string FullNameAr { get; set; }
 
-		const segs: string[] = ['Courses'];
-		if (courseId != null) segs.push(String(courseId));
-		if (mod) segs.push('Modules', String(mod.Id));
-		return segs;
+		[JsonProperty("FullNameEn")]
+		public string FullNameEn { get; set; }
+
+		[JsonProperty("NationalityEn")]
+		public string NationalityEn { get; set; }
+
+		[JsonProperty("NationalityAr")]
+		public string NationalityAr { get; set; }
+
+		[JsonProperty("BirthDate")]
+		public string BirthDate { get; set; }
+
+		[JsonProperty("Gender")]
+		public string Gender { get; set; }
+
+		[JsonProperty("BloodGroup")]
+		public string BloodGroup { get; set; }
+
+		[JsonProperty("Photo")]
+		public string Photo { get; set; }
+
+		[JsonProperty("CardExpiryDate")]
+		public string CardExpiryDate { get; set; }
+
+		[JsonProperty("CardSerial")]
+		public string CardSerial { get; set; }
+
+		[JsonProperty("DocumentNumber")]
+		public string DocumentNumber { get; set; }
+
+		[JsonProperty("PassportNumber")]
+		public string PassportNumber { get; set; }
+
+		[JsonProperty("GovData")]
+		public PaciGovDataDto GovData { get; set; }
+
+		[JsonProperty("Address")]
+		public PaciAddressDto Address { get; set; }
 	}
+	public class PaciGovDataDto
+	{
+		[JsonProperty("CivilIdExpiryDate")]
+		public string CivilIdExpiryDate { get; set; }
 
-	private sanitizeFileName(name: string): string {
-		return (name || '')
-			.replace(/[<>:"|?*\\/#{}%~&]/g, '_')
-			.replace(/\s+/g, ' ')
-			.trim();
+		[JsonProperty("SponsorName")]
+		public string SponsorName { get; set; }
 	}
+	public class PaciAddressDto
+	{
+		[JsonProperty("Governerate")]
+		public string Governerate { get; set; }
 
-	private async uploadToLibrary(file: File, lessonId: number): Promise<{ serverRelativeUrl: string; absoluteUrl: string }> {
-		const sp = getSP(this.props.context);
+		[JsonProperty("Area")]
+		public string Area { get; set; }
 
-		const webInfo: any = await sp.web.select('Url')();
-		const origin: string = new URL(webInfo.Url || window.location.origin).origin;
+		[JsonProperty("PaciBuildingNumber")]
+		public string PaciBuildingNumber { get; set; }
 
-		const { rootFolder, libSrvRel } = await this.getCourseAssetsRoot();
+		[JsonProperty("FloorNumber")]
+		public string FloorNumber { get; set; }
 
-		const segs = this.buildLessonFolderSegments(lessonId);
-		const targetFolder = await this.ensureNestedFolder(rootFolder, segs);
+		[JsonProperty("BuildingNumber")]
+		public string BuildingNumber { get; set; }
 
-		const safeName = this.sanitizeFileName(file.name);
+		[JsonProperty("BlockNumber")]
+		public string BlockNumber { get; set; }
 
-		if (typeof targetFolder.files.addUsingPath === 'function') {
-			const addRes = await targetFolder.files.addUsingPath(safeName, file, { Overwrite: true });
+		[JsonProperty("UnitNumber")]
+		public string UnitNumber { get; set; }
 
-			const fMeta = await addRes.file.select('ServerRelativeUrl')();
-			const srl: string = (fMeta && fMeta.ServerRelativeUrl) || `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
+		[JsonProperty("StreetName")]
+		public string StreetName { get; set; }
 
-			return { serverRelativeUrl: srl, absoluteUrl: origin + srl };
-		}
-
-		const addResV2 = await targetFolder.files.add(safeName, file, true);
-		const fMeta2 = await addResV2.file.select('ServerRelativeUrl')();
-		const srl2: string = (fMeta2 && fMeta2.ServerRelativeUrl) || `${libSrvRel}/${[...segs, safeName].join('/')}`.replace(/\/+/g, '/');
-
-		return { serverRelativeUrl: srl2, absoluteUrl: origin + srl2 };
+		[JsonProperty("UnitType")]
+		public string UnitType { get; set; }
 	}
+	public class PaciSignatureDto
+	{
+		[JsonProperty("SignatureData")]
+		public string SignatureData { get; set; }
 
-	private hasGridPendingEdits(): boolean {
-		try {
-			const cg: DevExpress.ui.dxDataGrid = $(this.coursesGridRef).dxDataGrid('instance');
-			const mg: DevExpress.ui.dxDataGrid = $(this.modulesGridRef).dxDataGrid('instance');
-			const lg: DevExpress.ui.dxDataGrid = $(this.lessonsGridRef).dxDataGrid('instance');
-			return !!((cg && cg.hasEditData && cg.hasEditData()) || (mg && mg.hasEditData && mg.hasEditData()) || (lg && lg.hasEditData && lg.hasEditData()));
-		} catch {
-			return false;
-		}
+		[JsonProperty("SigningCertificate")]
+		public string SigningCertificate { get; set; }
 	}
-
-	private hasUnsavedDiffsArrays(): boolean {
-		const s = this.state;
-		return !!(
-			s.newCourses.length ||
-			s.updCourses.length ||
-			s.delCourses.length ||
-			s.newModules.length ||
-			s.updModules.length ||
-			s.delModules.length ||
-			s.newLessons.length ||
-			s.updLessons.length ||
-			s.delLessons.length
-		);
-	}
-
-	private hasUnsavedChanges(): boolean {
-		if (this.state.saving) return false;
-		return this.hasGridPendingEdits() || this.hasUnsavedDiffsArrays();
-	}
-
-	private applyCourseSecurity = async (courseId: number) => {
-		const sp = getSP(this.props.context);
-		const web = sp.web;
-
-		const c = await web.lists.getByTitle('Courses').items.getById(courseId).select('Id', 'VisibilityChoice', 'OwnerGroups/Id', 'Author/Id').expand('OwnerGroups', 'Author')();
-
-		const visibility: 'MeOnly' | 'SelectGroups' = c.VisibilityChoice || 'MeOnly';
-		const ownerUserId: number = c.Author && c.Author.Id;
-		const groupIds: number[] = (c.OwnerGroups || []).map((g: any) => g.Id);
-
-		const principalIds: number[] = [];
-		if (ownerUserId) principalIds.push(ownerUserId);
-		if (visibility === 'SelectGroups' && groupIds.length) principalIds.push(...groupIds);
-
-		const contrib = await web.roleDefinitions.getByName('Contribute')();
-		const contribId = contrib.Id;
-
-		const setItemAcl = async (listTitle: string, id: number) => {
-			const item = web.lists.getByTitle(listTitle).items.getById(id);
-			await item.breakRoleInheritance(false, false);
-			for (const pid of principalIds) {
-				await item.roleAssignments.add(pid, contribId);
-			}
-		};
-
-		await setItemAcl('Courses', courseId);
-
-		const modules = await web.lists.getByTitle('Modules').items.select('Id', 'CourseId').filter(`CourseId eq ${courseId}`).top(5000)();
-		for (const m of modules) await setItemAcl('Modules', m.Id);
-
-		const modIds = modules.map((m: any) => m.Id);
-		if (modIds.length) {
-			const lessons = await web.lists
-				.getByTitle('Lessons')
-				.items.select('Id', 'ModuleId')
-				.filter(`ModuleId in (${modIds.join(',')})`)
-				.top(5000)();
-			for (const l of lessons) await setItemAcl('Lessons', l.Id);
-		}
-	};
 }
