@@ -1,480 +1,118 @@
-using System;
-using System.Configuration;
-using System.Net;
-using System.Threading.Tasks;
-using System.Web.Http;
-using webApi.Models.Floward;
-using webApi.Models.PACI;
-
-namespace webApi.Controllers
-{
-	[RoutePrefix("api/paci")]
-	public class PaciAuthController : ApiController
-	{
-		private readonly IPaciSoapClient _soapClient;
-
-		public PaciAuthController()
-		{
-			_soapClient = new PaciSoapClient();
-		}
-
-		[HttpPost]
-		[Route("initiate-auth")]
-		public async Task<IHttpActionResult> InitiateAuth(PaciInitiateAuthRequestDto requestDto)
-		{
-			if (requestDto == null || string.IsNullOrEmpty(requestDto.CivilNo))
-				return BadRequest("CivilNo is required");
-
-			try
-			{
-				var callbackUrl = ConfigurationManager.AppSettings["PaciCallbackUrl"];
-				var resp = await _soapClient.InitiateAuthAsync(requestDto, callbackUrl);
-
-				if (string.IsNullOrEmpty(resp.RequestId))
-				{
-					return Content(HttpStatusCode.BadGateway, "No RequestId returned from PACI");
-				}
-
-				return Ok(resp);
-			}
-			catch (Exception ex)
-			{
-				return Content(HttpStatusCode.InternalServerError,
-					new { message = "Error while calling PACI", detail = ex.Message });
-			}
-		}
-
-		[HttpGet]
-		[Route("ping")]
-		public IHttpActionResult Ping()
-		{
-			return Ok("PACI controller loaded");
-		}
-	}
-}
-
-
-==========================================
-
-using Newtonsoft.Json;
-using System;
-using System.Threading.Tasks;
-using System.Web.Http;
-using webApi.Models.PACI;
-using webApi.Services.Floward;
-
-namespace webApi.Controllers
-{
-	[RoutePrefix("api/paci")]
-	public class PaciCallbackController : ApiController
-	{
-		private readonly IPaciAuthCallbackLogger _logger;
-
-		public PaciCallbackController()
-		{
-			_logger = new PaciAuthCallbackLogger();
-		}
-
-		[HttpPost]
-		[Route("callback/auth")]
-		public async Task<IHttpActionResult> CallbackAuth()
-		{
-			string rawJson = null;
-			int logItemId = 0;
-			try
-			{
-				rawJson = await Request.Content.ReadAsStringAsync();
-
-				MIDAuthSignResponseDto data = null;
-				try
-				{
-					var root = JsonConvert.DeserializeObject<PaciCallbackRootDto>(rawJson);
-					data = root?.MIDAuthSignResponse;
-				}
-				catch
-				{
-					_logger.LogReceived(null, rawJson);
-					return Ok();
-				}
-
-				logItemId = _logger.LogReceived(data, rawJson);
-
-				if (data?.RequestDetails == null ||
-					string.IsNullOrWhiteSpace(data.RequestDetails.RequestId))
-				{
-					_logger.UpdateProcessingResult(
-						logItemId,
-						false,
-						null,
-						"Missing RequestDetails or RequestID"
-					);
-
-					return Ok();
-				}
-
-				string? resultCode = data.ResultDetails?.ResultCode;
-				var userAction = data.ResultDetails?.UserAction;
-
-				_logger.UpdateProcessingResult(logItemId, true, resultCode);
-			}
-			catch (Exception ex)
-			{
-				try
-				{
-					if (logItemId > 0)
-					{
-						_logger.UpdateProcessingResult(
-							logItemId,
-							false,
-							null,
-							ex.Message
-						);
-					}
-					else
-					{
-						_logger.LogReceived(null, rawJson);
-					}
-				}
-				catch
-				{ }
-				return Ok();
-			}
-
-			return Ok();
-		}
-	}
-}
-
-======================================
-
 using Microsoft.SharePoint;
 using System;
 using System.Configuration;
-using webApi.Models.Floward;
+using System.Linq;
+using System.Web.Http;
 using webApi.Models.PACI;
 
-namespace webApi.Services.Floward
+namespace webApi.Controllers
 {
-	public interface IPaciAuthCallbackLogger
-	{
-		int LogReceived(MIDAuthSignResponseDto data, string rawJson);
-		void UpdateProcessingResult(int itemId, bool success,string? resultCode, string errorMessage = null);
-	}
-	public class PaciAuthCallbackLogger : IPaciAuthCallbackLogger
-	{
-		private readonly string _siteUrl;
-		private readonly string _listName = "PaciAuthCallbackLog";
-
-		public PaciAuthCallbackLogger()
-		{
-			_siteUrl = ConfigurationManager.AppSettings["PaciAuthCallbackLogSiteUrl"];
-			_listName = ConfigurationManager.AppSettings["PaciAuthCallbackLogListName"];
-
-			if (string.IsNullOrEmpty(_siteUrl))
-				throw new ConfigurationErrorsException("Missing appSettings: PaciAuthCallbackLogSiteUrl");
-		}
-
-		public int LogReceived(MIDAuthSignResponseDto data, string rawJson)
-		{
-			if (data?.RequestDetails == null)
-				throw new ArgumentException("Invalid PACI callback data");
-
-			int itemId = 0;
-
-			SPSecurity.RunWithElevatedPrivileges(() =>
-			{
-				using (var site = new SPSite(_siteUrl))
-				using (var web = site.OpenWeb())
-				{
-					web.AllowUnsafeUpdates = true;
-
-					var list = web.Lists[_listName];
-					var item = list.Items.Add();
-
-					var req = data.RequestDetails;
-					var res = data.ResultDetails;
-
-					item["Title"] = Safe(req.RequestId);
-					item["RequestId"] = Safe(req.RequestId);
-					item["RequestType"] = Safe(req.RequestType);
-					item["ServiceProviderId"] = Safe(req.ServiceProviderId);
-					item["CivilNo"] = Safe(req.CivilNo);
-
-					if (res != null)
-					{
-						var resultCode = item["ResultCode"] != null ? Convert.ToInt32(item["ResultCode"]) : (int?)null;
-
-						item["ResultCode"] = resultCode;
-						item["ResultDescription"] = DescribeCode(resultCode);
-						item["UserAction"] = res.UserAction;
-						item["UserCivilNo"] = Safe(res.UserCivilNo);
-					}
-
-					item["RawJson"] = rawJson;
-					item["IsProcessed"] = false;
-					item["ProcessedOn"] = null;
-					item["ErrorMessage"] = null;
-
-					item.Update();
-
-					itemId = item.ID;
-					web.AllowUnsafeUpdates = false;
-				}
-			});
-
-			return itemId;
-		}
-
-		public void UpdateProcessingResult(int itemId, bool success,string? resultCode, string errorMessage = null)
-		{
-			if (itemId <= 0)
-				return;
-
-			SPSecurity.RunWithElevatedPrivileges(() =>
-			{
-				using (var site = new SPSite(_siteUrl))
-				using (var web = site.OpenWeb())
-				{
-					web.AllowUnsafeUpdates = true;
-
-					var list = web.Lists[_listName];
-					var item = list.GetItemById(itemId);
-
-					item["IsProcessed"] = success;
-					item["ProcessedOn"] = DateTime.Now;
-					item["ResultCode"] = resultCode;
-					item["ResultDescription"] = DescribeCode(resultCode);
-					item["ErrorMessage"] = success ? null : (errorMessage ?? "Unknown error");
-
-					item.Update();
-					web.AllowUnsafeUpdates = false;
-				}
-			});
-		}
-
-		public string DescribeCode(int? code)
-		{
-			var describe = "";
-			switch (code)
-			{
-				case 10:
-					describe = "Authenticated";
-					break;
-				case 20:
-					describe = "User certificate is revoked";
-					break;
-				case 30:
-					describe = "Failed to verify";
-					break;
-				case 40:
-					describe = "Declined";
-					break;
-				case 50:
-					describe = "Certificate Expired";
-					break;
-				default:
-					describe = null;
-					break;
-			}
-			return describe;
-		}
-		private static string Safe(string s) => string.IsNullOrEmpty(s) ? string.Empty : s;
-	}
-}		
-
-=============================
-using Newtonsoft.Json;
-
-namespace webApi.Models.PACI
-{
-	public class PaciInitiateAuthRequestDto
-	{
-		public string CivilNo { get; set; }
-		public string AssuranceLevel { get; set; }
-		public string ServiceDescriptionEN { get; set; }
-		public string ServiceDescriptionAR { get; set; }
-		public string AdditionalData { get; set; }
-		public string Challenge { get; set; }
-	}
-
-	public class PaciInitiateAuthResponseDto
-	{
-		public string RequestId { get; set; }
-		public string QRCodeImageBase64 { get; set; }
-	}
-
-	public class PaciCallbackRootDto
-	{
-		[JsonProperty("MIDAuthSignResponse")]
-		public MIDAuthSignResponseDto MIDAuthSignResponse { get; set; }
-	}
-
-	public class MIDAuthSignResponseDto
-	{
-		[JsonProperty("RequestDetails")]
-		public RequestDetailsDto RequestDetails { get; set; }
-
-		[JsonProperty("ResultDetails")]
-		public ResultDetailsDto ResultDetails { get; set; }
-
-		[JsonProperty("PersonalData")]
-		public PaciPersonalDataDto PersonalData { get; set; }
-
-		[JsonProperty("Signature")]
-		public PaciSignatureDto Signature { get; set; }
-	}
-	public class RequestDetailsDto
-	{
-		[JsonProperty("requestId")]
-		public string RequestId { get; set; }
-
-		[JsonProperty("requestType")]
-		public string RequestType { get; set; }
-
-		[JsonProperty("serviceProviderId")]
-		public string ServiceProviderId { get; set; }
-
-		[JsonProperty("civilNo")]
-		public string CivilNo { get; set; }
-	}
-	public class ResultDetailsDto
-	{
-		[JsonProperty("resultCode")]
-		public string ResultCode { get; set; }
-
-		[JsonProperty("UserAction")]
-		public string UserAction { get; set; }
-
-		[JsonProperty("UserCivilNo")]
-		public string UserCivilNo { get; set; }
-
-		[JsonProperty("UserCertificate")]
-		public string UserCertificate { get; set; }
-
-		[JsonProperty("SignatureData")]
-		public string SignatureData { get; set; }
-
-		[JsonProperty("HashAlgorithm")]
-		public string HashAlgorithm { get; set; }
-
-		[JsonProperty("SigningDatatype")]
-		public string SigningDatatype { get; set; }
-
-		[JsonProperty("TransactionDate")]
-		public string TransactionDate { get; set; }
-
-		[JsonIgnore]
-		public int? ResultCodeInt
-		{
-			get
-			{
-				if (int.TryParse(ResultCode, out var v))
-					return v;
-				return null;
-			}
-		}
-
-		[JsonIgnore]
-		public int? UserActionInt
-		{
-			get
-			{
-				if (int.TryParse(UserAction, out var v))
-					return v;
-				return null;
-			}
-		}
-	}
-	public class PaciPersonalDataDto
-	{
-		[JsonProperty("CivilID")]
-		public string CivilId { get; set; }
-
-		[JsonProperty("FullNameAr")]
-		public string FullNameAr { get; set; }
-
-		[JsonProperty("FullNameEn")]
-		public string FullNameEn { get; set; }
-
-		[JsonProperty("NationalityEn")]
-		public string NationalityEn { get; set; }
-
-		[JsonProperty("NationalityAr")]
-		public string NationalityAr { get; set; }
-
-		[JsonProperty("BirthDate")]
-		public string BirthDate { get; set; }
-
-		[JsonProperty("Gender")]
-		public string Gender { get; set; }
-
-		[JsonProperty("BloodGroup")]
-		public string BloodGroup { get; set; }
-
-		[JsonProperty("Photo")]
-		public string Photo { get; set; }
-
-		[JsonProperty("CardExpiryDate")]
-		public string CardExpiryDate { get; set; }
-
-		[JsonProperty("CardSerial")]
-		public string CardSerial { get; set; }
-
-		[JsonProperty("DocumentNumber")]
-		public string DocumentNumber { get; set; }
-
-		[JsonProperty("PassportNumber")]
-		public string PassportNumber { get; set; }
-
-		[JsonProperty("GovData")]
-		public PaciGovDataDto GovData { get; set; }
-
-		[JsonProperty("Address")]
-		public PaciAddressDto Address { get; set; }
-	}
-	public class PaciGovDataDto
-	{
-		[JsonProperty("CivilIdExpiryDate")]
-		public string CivilIdExpiryDate { get; set; }
-
-		[JsonProperty("SponsorName")]
-		public string SponsorName { get; set; }
-	}
-	public class PaciAddressDto
-	{
-		[JsonProperty("Governerate")]
-		public string Governerate { get; set; }
-
-		[JsonProperty("Area")]
-		public string Area { get; set; }
-
-		[JsonProperty("PaciBuildingNumber")]
-		public string PaciBuildingNumber { get; set; }
-
-		[JsonProperty("FloorNumber")]
-		public string FloorNumber { get; set; }
-
-		[JsonProperty("BuildingNumber")]
-		public string BuildingNumber { get; set; }
-
-		[JsonProperty("BlockNumber")]
-		public string BlockNumber { get; set; }
-
-		[JsonProperty("UnitNumber")]
-		public string UnitNumber { get; set; }
-
-		[JsonProperty("StreetName")]
-		public string StreetName { get; set; }
-
-		[JsonProperty("UnitType")]
-		public string UnitType { get; set; }
-	}
-	public class PaciSignatureDto
-	{
-		[JsonProperty("SignatureData")]
-		public string SignatureData { get; set; }
-
-		[JsonProperty("SigningCertificate")]
-		public string SigningCertificate { get; set; }
-	}
+    [RoutePrefix("api/paci")]
+    public class PaciAuthController : ApiController
+    {
+        // ... your existing code (initiate-auth, ping, etc.)
+
+        [HttpGet]
+        [Route("status/{requestId}")]
+        public IHttpActionResult GetStatus(string requestId)
+        {
+            if (string.IsNullOrWhiteSpace(requestId))
+                return BadRequest("requestId is required");
+
+            var siteUrl = ConfigurationManager.AppSettings["PaciAuthCallbackLogSiteUrl"];
+            var listName = ConfigurationManager.AppSettings["PaciAuthCallbackLogListName"];
+
+            if (string.IsNullOrWhiteSpace(siteUrl))
+                return InternalServerError(new ConfigurationErrorsException("Missing appSettings: PaciAuthCallbackLogSiteUrl"));
+
+            if (string.IsNullOrWhiteSpace(listName))
+                listName = "PaciAuthCallbackLog";
+
+            PaciAuthStatusDto dto = null;
+
+            SPSecurity.RunWithElevatedPrivileges(() =>
+            {
+                using (var site = new SPSite(siteUrl))
+                using (var web = site.OpenWeb())
+                {
+                    var list = web.Lists[listName];
+
+                    var query = new SPQuery
+                    {
+                        RowLimit = 1,
+                        Query = $@"
+<OrderBy><FieldRef Name='ID' Ascending='FALSE' /></OrderBy>
+<Where>
+  <Eq>
+    <FieldRef Name='RequestId' />
+    <Value Type='Text'>{EscapeCaml(requestId)}</Value>
+  </Eq>
+</Where>"
+                    };
+
+                    var items = list.GetItems(query);
+                    if (items == null || items.Count == 0)
+                    {
+                        dto = new PaciAuthStatusDto
+                        {
+                            RequestId = requestId,
+                            IsProcessed = false
+                        };
+                        return;
+                    }
+
+                    var item = items[0];
+
+                    // Note: your list uses these internal names (based on your logger):
+                    // RequestId, IsProcessed, ResultCode, ResultDescription, UserAction, ProcessedOn, Created
+                    dto = new PaciAuthStatusDto
+                    {
+                        RequestId = item["RequestId"] as string,
+                        IsProcessed = ToBool(item["IsProcessed"]),
+                        ResultCode = ToNullableInt(item["ResultCode"]),
+                        ResultDescription = item["ResultDescription"] as string,
+                        UserAction = ToNullableInt(item["UserAction"]),
+                        ProcessedOn = ToNullableDate(item["ProcessedOn"]),
+                        CallbackReceivedOn = ToNullableDate(item["Created"]) // SharePoint item created time
+                    };
+                }
+            });
+
+            return Ok(dto);
+        }
+
+        private static bool ToBool(object v)
+        {
+            if (v == null) return false;
+            if (v is bool b) return b;
+            bool.TryParse(v.ToString(), out var r);
+            return r;
+        }
+
+        private static int? ToNullableInt(object v)
+        {
+            if (v == null) return null;
+            if (v is int i) return i;
+            if (int.TryParse(v.ToString(), out var r)) return r;
+            return null;
+        }
+
+        private static DateTime? ToNullableDate(object v)
+        {
+            if (v == null) return null;
+            if (v is DateTime dt) return dt;
+            if (DateTime.TryParse(v.ToString(), out var r)) return r;
+            return null;
+        }
+
+        private static string EscapeCaml(string value)
+        {
+            return value
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;")
+                .Replace("'", "&apos;");
+        }
+    }
 }
