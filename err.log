@@ -1,1 +1,179 @@
+import * as React from "react";
+import CustomerLookup from "./customer/CustomerLookup";
+import { ICustomerInfo } from "./customer/ICustomerInfo";
+import { apiGet, apiPost } from "./common/ApiClient";
 
+type UiStatus = "idle" | "customerFound" | "starting" | "waiting" | "approved" | "rejected" | "failed" | "timeout";
+
+interface IProps {
+  apiBaseUrl: string;
+}
+
+interface IState {
+  status: UiStatus;
+  customer?: ICustomerInfo;
+  message?: string;
+  requestId?: string;
+  secondsLeft: number;
+  resultCode?: number;
+  resultDescription?: string;
+}
+
+export default class PaciAuth extends React.Component<IProps, IState> {
+  private pollTimer?: number;
+  private countdownTimer?: number;
+
+  constructor(props: IProps) {
+    super(props);
+    this.state = { status: "idle", secondsLeft: 300 };
+  }
+
+  public componentWillUnmount(): void {
+    this.clearTimers();
+  }
+
+  private clearTimers() {
+    if (this.pollTimer) window.clearInterval(this.pollTimer);
+    if (this.countdownTimer) window.clearInterval(this.countdownTimer);
+    this.pollTimer = undefined;
+    this.countdownTimer = undefined;
+  }
+
+  private onCustomerFound = (customer: ICustomerInfo) => {
+    this.clearTimers();
+    this.setState({
+      customer,
+      status: "customerFound",
+      message: undefined,
+      requestId: undefined,
+      secondsLeft: 300,
+      resultCode: undefined,
+      resultDescription: undefined
+    });
+  };
+
+  private async startPaciAuth(): Promise<void> {
+    const customer = this.state.customer;
+    if (!customer) return;
+
+    this.clearTimers();
+    this.setState({ status: "starting", message: "Sending PACI authentication request...", secondsLeft: 300 });
+
+    try {
+      const url = this.props.apiBaseUrl.replace(/\/$/, "") + "/api/paci/initiate-auth";
+
+      const resp = await apiPost<{ requestId: string }>(url, {
+        civilNo: customer.civilId,
+        assuranceLevel: "Medium",
+        serviceDescriptionEN: "Authentication",
+        serviceDescriptionAR: "Authentication",
+        additionalData: "",
+        challenge: ""
+      });
+
+      if (!resp.requestId) {
+        this.setState({ status: "failed", message: "No RequestId returned from PACI initiate API." });
+        return;
+      }
+
+      this.setState({ status: "waiting", requestId: resp.requestId, message: "Waiting for customer approval..." });
+
+      this.startCountdown(resp.requestId);
+      this.startPolling(resp.requestId);
+    } catch (e: any) {
+      this.setState({ status: "failed", message: e?.message || "Failed to initiate PACI auth." });
+    }
+  }
+
+  private startCountdown(requestId: string) {
+    this.countdownTimer = window.setInterval(() => {
+      this.setState(prev => {
+        const next = prev.secondsLeft - 1;
+        if (next <= 0) {
+          this.clearTimers();
+          return { ...prev, secondsLeft: 0, status: "timeout", message: "Timed out (5 minutes). No response received." };
+        }
+        return { ...prev, secondsLeft: next };
+      });
+    }, 1000);
+  }
+
+  private startPolling(requestId: string) {
+    this.pollTimer = window.setInterval(async () => {
+      try {
+        const url =
+          this.props.apiBaseUrl.replace(/\/$/, "") +
+          "/api/paci/status/" +
+          encodeURIComponent(requestId);
+
+        const s = await apiGet<{
+          requestId: string;
+          isProcessed: boolean;
+          resultCode?: number;
+          resultDescription?: string;
+          userAction?: number;
+        }>(url);
+
+        if (!s || !s.isProcessed) return;
+
+        this.clearTimers();
+
+        const rc = s.resultCode;
+        const desc = s.resultDescription;
+
+        // You can adjust mapping based on your codes
+        if (rc === 10) {
+          this.setState({ status: "approved", resultCode: rc, resultDescription: desc, message: desc || "Authenticated" });
+        } else if (rc === 40) {
+          this.setState({ status: "rejected", resultCode: rc, resultDescription: desc, message: desc || "Declined" });
+        } else {
+          this.setState({ status: "failed", resultCode: rc, resultDescription: desc, message: desc || "Failed" });
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+  }
+
+  public render(): React.ReactElement<IProps> {
+    const { customer, status, message, secondsLeft, requestId, resultCode, resultDescription } = this.state;
+
+    return (
+      <div style={{ padding: 12, maxWidth: 800 }}>
+        <CustomerLookup apiBaseUrl={this.props.apiBaseUrl} onCustomerFound={this.onCustomerFound} />
+
+        {customer && (
+          <div style={{ marginTop: 12, border: "1px solid #ddd", padding: 12, borderRadius: 4 }}>
+            <div style={{ marginBottom: 8 }}>
+              <b>Customer:</b> {customer.fullNameEn} / {customer.fullNameAr}
+            </div>
+
+            <button
+              onClick={() => this.startPaciAuth()}
+              disabled={status === "starting" || status === "waiting"}
+              style={{ padding: "8px 14px" }}
+            >
+              Authenticate with PACI
+            </button>
+
+            {status === "waiting" && (
+              <div style={{ marginTop: 10 }}>
+                <div><b>RequestId:</b> {requestId}</div>
+                <div><b>Time left:</b> {secondsLeft}s</div>
+              </div>
+            )}
+
+            {message && <div style={{ marginTop: 10 }}>{message}</div>}
+
+            {(status === "approved" || status === "rejected" || status === "failed") && (
+              <div style={{ marginTop: 10, fontSize: 12 }}>
+                {resultCode !== undefined && <div><b>ResultCode:</b> {resultCode}</div>}
+                {resultDescription && <div><b>Description:</b> {resultDescription}</div>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+}
