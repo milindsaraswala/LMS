@@ -1,167 +1,74 @@
-import * as React from 'react';
-import { validateCivilId } from './CustomerValidation';
-import { ICustomerInfo, IFlowardCard, IFlowardCustomerResponse } from './ICustomerInfo';
+using Microsoft.Web.Services3.Security.Tokens;
+using System;
+using System.Configuration;
+using System.Net;
+using System.Net.Http;
+using System.Net.Security;
+using System.Threading.Tasks;
+using webApi.Models.PACI;
 
-export interface IProps {
-  apiBaseUrl: string;
-  onCustomerFound: (customer: ICustomerInfo) => void;
-  onCustomerNotFound: (message: string) => void;
-}
+namespace webApi.Models.Floward
+{
+	public interface IPaciSoapClient
+	{
+		Task<PaciInitiateAuthResponseDto> InitiateAuthAsync(PaciInitiateAuthRequestDto request, string callbackUrl);
+	}
+	public class PaciSoapClient : IPaciSoapClient
+	{
+		private readonly string _serviceUrl;
+		private readonly string _username;
+		private readonly string _password;
 
-export interface IState {
-  civilId: string;
-  loading: boolean;
-  message?: string;
-  customer?: ICustomerInfo;
-}
+		public PaciSoapClient()
+		{
+			_serviceUrl = ConfigurationManager.AppSettings["PaciSoapServiceUrl"];
+			_username = ConfigurationManager.AppSettings["CoreRESTClientId"];
+			_password = ConfigurationManager.AppSettings["CoreRESTSecretKey"];		
+		}
 
-export default class CustomerLookup extends React.Component<IProps, IState> {
-  constructor(props: IProps) {
-    super(props);
-    this.state = {
-      civilId: '',
-      loading: false
-    };
-  }
+		public async Task<PaciInitiateAuthResponseDto> InitiateAuthAsync(PaciInitiateAuthRequestDto request, string callbackUrl)
+		{
+			return await Task.Run(() =>
+			{
+				var authRequest = new MobileIDAuth.AuthenticateRequest
+				{
+					ServiceDescriptionEN = request.ServiceDescriptionEN,
+					ServiceDescriptionAR = request.ServiceDescriptionAR,
+					AdditionalData = request.AdditionalData ?? string.Empty,
+					Challenge = request.Challenge ?? string.Empty,
+					SPCallbackURL = callbackUrl,
+					PersonCivilNo = request.CivilNo
+				};
 
-  public render(): React.ReactElement<IProps> {
-    const { customer, loading, message } = this.state;
+				var client = new Services.MidWrapperServiceWithBasicAuth
+				{
+					Url = _serviceUrl,
+					BasicUser = _username,
+					BasicPass = _password,
+					PreAuthenticate = true,
+					Timeout = 1000 * 60 * 2
+				};
 
-    return (
-      <div style={{ padding: 12, maxWidth: 700 }}>
-        <h3 style={{ marginTop: 0 }}>Customer Lookup</h3>
+				bool assuranceSpecified = true;
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <input
-            type='text'
-            value={this.state.civilId}
-            maxLength={12}
-            onChange={(e) => {
-              const v: string = (e.target as HTMLInputElement).value;
-              if (/^\d*$/.test(v)) {
-                this.setState({ civilId: v });
-              }
-            }}
-            placeholder='Enter Civil ID'
-            style={{ flex: 1, padding: 8 }}
-            disabled={loading}
-          />
-          <button onClick={() => this.lookup()} disabled={loading} style={{ padding: '8px 14px' }}>
-            {loading ? 'Searching...' : 'Search'}
-          </button>
-        </div>
+				var response = client.InitiateAuthRequestPNWithAssuranceLevel(
+					authRequest,
+					MobileIDAuth.MIDAssuranceLevel.Medium,
+					assuranceSpecified
+					);
 
-        {message && <div style={{ marginBottom: 10 }}>{message}</div>}
+				if (response.Error != null)
+				{
+					throw new ApplicationException($"PACI error {response.Error.Code}: {response.Error.Message}");
+				}
 
-        {customer && (
-          <div style={{ border: '1px solid #ddd', padding: 12, borderRadius: 4 }}>
-            <div>
-              <b>Civil ID : </b>
-              {customer.civilId}
-            </div>
-            <div>
-              <b>Name AR : </b>
-              {customer.fullNameAr}
-            </div>
-            <div>
-              <b>Name EN : </b>
-              {customer.fullNameEn}
-            </div>
-            <div>
-              <b>Nationality : </b>
-              {customer.nationality}
-            </div>
-            <div>
-              <b>DOB : </b>
-              {customer.dob}
-            </div>
-            <div>
-              <b>Mobile : </b>
-              {customer.mobile}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
+				var requestId = response.Data;
 
-  private async lookup(): Promise<void> {
-    const civilId: string = (this.state.civilId || '').trim();
-
-    const validationError: string | null = validateCivilId(civilId);
-    if (validationError) {
-      this.setState({ message: validationError, customer: undefined, loading: false });
-      this.props.onCustomerNotFound(validationError);
-      return;
-    }
-
-    if (!this.props.apiBaseUrl) {
-      const msg = 'API Base URL is not configured.';
-      this.setState({ message: msg, customer: undefined, loading: false });
-      this.props.onCustomerNotFound(msg);
-      return;
-    }
-
-    this.setState({ loading: true, message: undefined, customer: undefined });
-
-    try {
-      const url: string = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/floward/' + encodeURIComponent(civilId);
-
-      const resp: Response = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
-
-      if (resp.status === 404) {
-        const txt: string = await resp.text();
-        const msg = txt && txt.trim() ? txt : 'Customer not found.';
-        this.setState({ loading: false, message: msg, customer: undefined });
-        this.props.onCustomerNotFound(msg);
-        return;
-      }
-
-      if (!resp.ok) {
-        const txt: string = await resp.text();
-        const msg = 'Error calling API: ' + txt;
-        this.setState({ loading: false, message: msg, customer: undefined });
-        this.props.onCustomerNotFound(msg);
-        return;
-      }
-
-      const api: IFlowardCustomerResponse = (await resp.json()) as IFlowardCustomerResponse;
-
-      if (!api) {
-        const msg = 'Empty response from API.';
-        this.setState({ loading: false, message: msg });
-        this.props.onCustomerNotFound(msg);
-        return;
-      }
-
-      if (api.errorCode !== 0) {
-        const msg = api.errorDesc || 'Customer not found.';
-        this.setState({ loading: false, message: msg });
-        this.props.onCustomerNotFound(msg);
-        return;
-      }
-
-      const c: IFlowardCard = api.cards[0];
-
-      const customer: ICustomerInfo = {
-        civilId: c.civilId,
-        fullNameAr: c.cardholderNameAr,
-        fullNameEn: c.cardholderNameEn,
-        nationality: c.nationality,
-        dob: c.dateOfBirth,
-        mobile: c.cardholderMobile
-      };
-
-      this.setState({ loading: false, customer, message: undefined });
-
-      this.props.onCustomerFound(customer);
-    } catch (e) {
-      const msg = e && (e as any).message ? (e as any).message : 'Unexpected error.';
-      this.setState({
-        loading: false,
-        message: msg
-      });
-      this.props.onCustomerNotFound(msg);
-    }
-  }
+				return new PaciInitiateAuthResponseDto
+				{
+					RequestId = requestId
+				};
+			});
+		}
+	}
 }
