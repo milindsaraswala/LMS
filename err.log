@@ -1,1 +1,152 @@
-{"errorCode":0,"errorDesc":"SUCCESS","cards":[{"cardExid":"44399500178964508033","maskedCardNo":"4439950002239175","civilId":"279121102119","cardholderNameEn":"Milind Bimalkumar Saraswala","cardholderNameAr":"Milind Bimalkumar Saraswala","nationality":"Indian","dateOfBirth":"12/12/1986","cardholderMobile":"60662709"}]}
+import * as React from 'react';
+import { validateCivilId } from './CustomerValidation';
+import { ICustomerInfo } from './ICustomerInfo';
+
+export interface IProps {
+  apiBaseUrl: string;
+  onCustomerFound: (customer: ICustomerInfo) => void;
+}
+
+export interface IState {
+  civilId: string;
+  loading: boolean;
+  message?: string;
+  customer?: ICustomerInfo;
+}
+
+export default class CustomerLookup extends React.Component<IProps, IState> {
+  constructor(props: IProps) {
+    super(props);
+    this.state = {
+      civilId: '',
+      loading: false
+    };
+  }
+
+  public render(): React.ReactElement<IProps> {
+    const { customer, loading, message } = this.state;
+
+    return (
+      <div style={{ padding: 12, maxWidth: 700 }}>
+        <h3 style={{ marginTop: 0 }}>Customer Lookup</h3>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <input
+            type='text'
+            value={this.state.civilId}
+            maxLength={12}
+            onChange={(e) => {
+              const v: string = (e.target as HTMLInputElement).value;
+              if (/^\d*$/.test(v)) {
+                this.setState({ civilId: v });
+              }
+            }}
+            placeholder='Enter Civil ID'
+            style={{ flex: 1, padding: 8 }}
+            disabled={loading}
+          />
+          <button onClick={() => this.lookup()} disabled={loading} style={{ padding: '8px 14px' }}>
+            {loading ? 'Searching...' : 'Search'}
+          </button>
+        </div>
+
+        {message && <div style={{ marginBottom: 10 }}>{message}</div>}
+
+        {customer && (
+          <div style={{ border: '1px solid #ddd', padding: 12, borderRadius: 4 }}>
+            <div>
+              <b>Civil ID:</b>
+              {customer.civilId}
+            </div>
+            <div>
+              <b>Name AR:</b>
+              {customer.fullNameAr}
+            </div>
+            <div>
+              <b>Name EN:</b>
+              {customer.fullNameEn}
+            </div>
+            <div>
+              <b>Nationality:</b>
+              {customer.nationality}
+            </div>
+            <div>
+              <b>DOB:</b>
+              {customer.dob}
+            </div>
+            <div>
+              <b>Mobile:</b>
+              {customer.mobile}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  private async lookup(): Promise<void> {
+    const civilId: string = (this.state.civilId || '').trim();
+
+    const validationError: string | null = validateCivilId(civilId);
+    if (validationError) {
+      this.setState({
+        message: validationError,
+        customer: undefined
+      });
+      return;
+    }
+
+    if (!this.props.apiBaseUrl) {
+      this.setState({ message: 'API Base URL is not configured.', customer: undefined });
+      return;
+    }
+
+    this.setState({ loading: true, message: undefined, customer: undefined });
+
+    try {
+      const url: string = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/floward/' + encodeURIComponent(civilId);
+
+      const resp: Response = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+
+      if (resp.status === 404) {
+        const txt: string = await resp.text();
+        this.setState({
+          loading: false,
+          message: txt || 'Customer not found.'
+        });
+        return;
+      }
+
+      if (!resp.ok) {
+        const txt: string = await resp.text();
+        this.setState({
+          loading: false,
+          message: 'Error calling API: ' + txt
+        });
+        return;
+      }
+
+      const customer: ICustomerInfo = (await resp.json()) as ICustomerInfo;
+
+      if (!customer || !customer.civilId) {
+        this.setState({
+          loading: false,
+          message: 'Customer not found.',
+          customer: undefined
+        });
+        return;
+      }
+
+      this.setState({
+        loading: false,
+        customer,
+        message: undefined
+      });
+    } catch (e) {
+      this.setState({
+        loading: false,
+        message: e ? e.message : 'Unexpected error.'
+      });
+    }
+  }
+}
