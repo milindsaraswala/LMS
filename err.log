@@ -1,194 +1,167 @@
 import * as React from 'react';
-import { IFlowardClaimProps } from './IFlowardClaimProps';
-import { apiGet, apiPost } from './common/ApiClient';
-import CustomerLookup from './customer/CustomerLookup';
-import { ICustomerInfo } from './customer/ICustomerInfo';
-
-export type UiStatus = 'idle' | 'customerFound' | 'starting' | 'waiting' | 'approved' | 'rejected' | 'failed' | 'timeout';
+import { validateCivilId } from './CustomerValidation';
+import { ICustomerInfo, IFlowardCard, IFlowardCustomerResponse } from './ICustomerInfo';
 
 export interface IProps {
   apiBaseUrl: string;
+  onCustomerFound: (customer: ICustomerInfo) => void;
+  onCustomerNotFound: (message: string) => void;
 }
 
 export interface IState {
-  status: UiStatus;
-  customer?: ICustomerInfo;
+  civilId: string;
+  loading: boolean;
   message?: string;
-  requestId?: string;
-  secondsLeft: number;
-  resultCode?: number;
-  resultDescription?: string;
+  customer?: ICustomerInfo;
 }
 
-export default class FlowardClaim extends React.Component<IProps, IState> {
-  private pollTimer?: number;
-  private countdownTimer?: number;
-
+export default class CustomerLookup extends React.Component<IProps, IState> {
   constructor(props: IProps) {
     super(props);
-    this.state = { status: 'idle', secondsLeft: 300 };
+    this.state = {
+      civilId: '',
+      loading: false
+    };
   }
 
-  public componentWillUnmount(): void {
-    this.clearTimers();
-  }
-
-  public render(): React.ReactElement<IFlowardClaimProps> {
-    const { customer, status, message, secondsLeft, requestId, resultCode, resultDescription } = this.state;
+  public render(): React.ReactElement<IProps> {
+    const { customer, loading, message } = this.state;
 
     return (
-      <div style={{ padding: 12, maxWidth: 800 }}>
-        <CustomerLookup apiBaseUrl={this.props.apiBaseUrl} onCustomerFound={this.onCustomerFound} onCustomerNotFound={this.onCustomerNotFound} />
+      <div style={{ padding: 12, maxWidth: 700 }}>
+        <h3 style={{ marginTop: 0 }}>Customer Lookup</h3>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <input
+            type='text'
+            value={this.state.civilId}
+            maxLength={12}
+            onChange={(e) => {
+              const v: string = (e.target as HTMLInputElement).value;
+              if (/^\d*$/.test(v)) {
+                this.setState({ civilId: v });
+              }
+            }}
+            placeholder='Enter Civil ID'
+            style={{ flex: 1, padding: 8 }}
+            disabled={loading}
+          />
+          <button onClick={() => this.lookup()} disabled={loading} style={{ padding: '8px 14px' }}>
+            {loading ? 'Searching...' : 'Search'}
+          </button>
+        </div>
+
+        {message && <div style={{ marginBottom: 10 }}>{message}</div>}
 
         {customer && (
-          <div style={{ marginTop: 12, border: '1px solid #ddd', padding: 12, borderRadius: 4 }}>
-            <div style={{ marginBottom: 8 }}>
-              <b>Customer:</b> {customer.fullNameEn} / {customer.fullNameAr}
+          <div style={{ border: '1px solid #ddd', padding: 12, borderRadius: 4 }}>
+            <div>
+              <b>Civil ID : </b>
+              {customer.civilId}
             </div>
-
-            <button onClick={() => this.startPaciAuth()} disabled={status === 'starting' || status === 'waiting'} style={{ padding: '8px 14px' }}>
-              Authenticate with PACI
-            </button>
-
-            {status === 'waiting' && (
-              <div style={{ marginTop: 10 }}>
-                <div>
-                  <b>RequestId:</b> {requestId}
-                </div>
-                <div>
-                  <b>Time left:</b> {secondsLeft}s
-                </div>
-              </div>
-            )}
-
-            {message && <div style={{ marginTop: 10 }}>{message}</div>}
-
-            {(status === 'approved' || status === 'rejected' || status === 'failed') && (
-              <div style={{ marginTop: 10, fontSize: 12 }}>
-                {resultCode !== undefined && (
-                  <div>
-                    <b>ResultCode:</b> {resultCode}
-                  </div>
-                )}
-                {resultDescription && (
-                  <div>
-                    <b>Description:</b> {resultDescription}
-                  </div>
-                )}
-              </div>
-            )}
+            <div>
+              <b>Name AR : </b>
+              {customer.fullNameAr}
+            </div>
+            <div>
+              <b>Name EN : </b>
+              {customer.fullNameEn}
+            </div>
+            <div>
+              <b>Nationality : </b>
+              {customer.nationality}
+            </div>
+            <div>
+              <b>DOB : </b>
+              {customer.dob}
+            </div>
+            <div>
+              <b>Mobile : </b>
+              {customer.mobile}
+            </div>
           </div>
         )}
       </div>
     );
   }
 
-  private clearTimers(): void {
-    if (this.pollTimer !== undefined) {
-      window.clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
-    if (this.countdownTimer !== undefined) {
-      window.clearInterval(this.countdownTimer);
-      this.countdownTimer = undefined;
-    }
-    this.pollTimer = undefined;
-    this.clearTimers = undefined;
-  }
+  private async lookup(): Promise<void> {
+    const civilId: string = (this.state.civilId || '').trim();
 
-  private onCustomerFound = (customer: ICustomerInfo) => {
-    this.clearTimers();
-    this.setState({
-      customer,
-      status: 'customerFound',
-      message: undefined,
-      requestId: undefined,
-      secondsLeft: 300,
-      resultCode: undefined,
-      resultDescription: undefined
-    });
-  };
-
-  private onCustomerNotFound = (msg: string) => {
-    this.clearTimers();
-    this.setState({
-      customer: undefined,
-      status: 'idle',
-      message: msg,
-      requestId: undefined,
-      secondsLeft: 300,
-      resultCode: undefined,
-      resultDescription: undefined
-    });
-  };
-
-  private async startPaciAuth(): Promise<void> {
-    const customer = this.state.customer;
-    if (!customer || !customer.civilId) {
-      this.setState({ status: 'failed', message: 'Please lookup valid Civil ID first.' });
+    const validationError: string | null = validateCivilId(civilId);
+    if (validationError) {
+      this.setState({ message: validationError, customer: undefined, loading: false });
+      this.props.onCustomerNotFound(validationError);
       return;
     }
 
-    this.clearTimers();
-    this.setState({ status: 'starting', message: 'Sending PACI authentication request...', secondsLeft: 300 });
+    if (!this.props.apiBaseUrl) {
+      const msg = 'API Base URL is not configured.';
+      this.setState({ message: msg, customer: undefined, loading: false });
+      this.props.onCustomerNotFound(msg);
+      return;
+    }
+
+    this.setState({ loading: true, message: undefined, customer: undefined });
+
     try {
-      const url = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/paci/initiate-auth';
-      const resp = await apiPost<{ requestId: string }>(url, {
-        civilNo: customer.civilId,
-        assuranceLevel: 'Medium',
-        serviceDescriptionEN: 'Authentication',
-        serviceDescriptionAR: 'Authentication',
-        additionalData: '',
-        challenge: ''
-      });
-      if (!resp.requestId) {
-        this.setState({ status: 'failed', message: 'No RequestId returned from PACI initiate API.' });
+      const url: string = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/floward/' + encodeURIComponent(civilId);
+
+      const resp: Response = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+
+      if (resp.status === 404) {
+        const txt: string = await resp.text();
+        const msg = txt && txt.trim() ? txt : 'Customer not found.';
+        this.setState({ loading: false, message: msg, customer: undefined });
+        this.props.onCustomerNotFound(msg);
         return;
       }
-      this.setState({ status: 'waiting', requestId: resp.requestId, message: 'Waiting for customer approval...' });
-      this.startCountdown(resp.requestId);
-      this.startPolling(resp.requestId);
+
+      if (!resp.ok) {
+        const txt: string = await resp.text();
+        const msg = 'Error calling API: ' + txt;
+        this.setState({ loading: false, message: msg, customer: undefined });
+        this.props.onCustomerNotFound(msg);
+        return;
+      }
+
+      const api: IFlowardCustomerResponse = (await resp.json()) as IFlowardCustomerResponse;
+
+      if (!api) {
+        const msg = 'Empty response from API.';
+        this.setState({ loading: false, message: msg });
+        this.props.onCustomerNotFound(msg);
+        return;
+      }
+
+      if (api.errorCode !== 0) {
+        const msg = api.errorDesc || 'Customer not found.';
+        this.setState({ loading: false, message: msg });
+        this.props.onCustomerNotFound(msg);
+        return;
+      }
+
+      const c: IFlowardCard = api.cards[0];
+
+      const customer: ICustomerInfo = {
+        civilId: c.civilId,
+        fullNameAr: c.cardholderNameAr,
+        fullNameEn: c.cardholderNameEn,
+        nationality: c.nationality,
+        dob: c.dateOfBirth,
+        mobile: c.cardholderMobile
+      };
+
+      this.setState({ loading: false, customer, message: undefined });
+
+      this.props.onCustomerFound(customer);
     } catch (e) {
-      this.setState({ status: 'failed', message: e ? e.message : 'Failed to initiate PACI auth.' });
-    }
-  }
-
-  private startCountdown(requestId: string) {
-    this.countdownTimer = window.setInterval(() => {
-      this.setState((prev) => {
-        const next = prev.secondsLeft - 1;
-        if (next <= 0) {
-          this.clearTimers();
-          return { ...prev, secondsLeft: 0, status: 'timeout', message: 'Timed out (5 minutes). No response received.' };
-        }
-        return { ...prev, secondsLeft: next };
+      const msg = e && (e as any).message ? (e as any).message : 'Unexpected error.';
+      this.setState({
+        loading: false,
+        message: msg
       });
-    }, 1000);
-  }
-
-  private startPolling(requestId: string) {
-    this.pollTimer = window.setInterval(async () => {
-      try {
-        const url = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/paci/status/' + encodeURIComponent(requestId);
-        const s = await apiGet<{
-          requestId: string;
-          isProcessed: boolean;
-          resultCode?: number;
-          resultDescription?: string;
-          userAction?: number;
-        }>(url);
-        if (!s || !s.isProcessed) return;
-        this.clearTimers();
-        const rc = s.resultCode;
-        const desc = s.resultDescription;
-        if (rc === 10) {
-          this.setState({ status: 'approved', resultCode: rc, resultDescription: desc, message: desc || 'Authenticated' });
-        } else if (rc === 40) {
-          this.setState({ status: 'rejected', resultCode: rc, resultDescription: desc, message: desc || 'Declined' });
-        } else {
-          this.setState({ status: 'failed', resultCode: rc, resultDescription: desc, message: desc || 'Failed' });
-        }
-      } catch (err) {}
-    }, 3000);
+      this.props.onCustomerNotFound(msg);
+    }
   }
 }
