@@ -1,0 +1,6 @@
+{
+    "error": {
+        "code": "-1, Microsoft.OData.Core.ODataException",
+        "message": "Parsing JSON Light feeds or entries in requests without entity set is not supported. Pass in the entity set as a parameter to ODataMessageReader.CreateODataEntryReader or ODataMessageReader.CreateODataFeedReader method."
+    }
+}
