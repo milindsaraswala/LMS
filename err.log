@@ -1,0 +1,582 @@
+import * as React from 'react';
+import { apiGet, apiPost } from './common/ApiClient';
+import CustomerLookup from './customer/CustomerLookup';
+import { ICustomerInfo, ICustomerCard } from './customer/ICustomerInfo';
+
+export type UiStatus =
+  | 'idle'
+  | 'customerFound'
+  | 'starting'
+  | 'waiting'
+  | 'approved'
+  | 'rejected'
+  | 'failed'
+  | 'timeout';
+
+export interface IProps {
+  apiBaseUrl: string;
+}
+
+export interface IState {
+  status: UiStatus;
+  customer?: ICustomerInfo;
+
+  message?: string;
+
+  // PACI
+  requestId?: string;
+  secondsLeft: number;
+  resultCode?: number;
+  resultDescription?: string;
+
+  // Card selection (after PACI approval)
+  selectedCardNo?: string;
+  selectedCard?: ICustomerCard;
+
+  // Dispute form
+  txnDate?: string;   // yyyy-mm-dd (from <input type="date">)
+  txnTime?: string;   // HH:mm (from <input type="time">)
+  txnAmount?: string; // keep as string for easy input validation
+  merchantName?: string;
+  disputeReason?: string;
+  comment?: string;
+  attachment?: File | null;
+
+  submitting?: boolean;
+}
+
+export default class FlowardClaim extends React.Component<IProps, IState> {
+  private pollTimer?: number;
+  private countdownTimer?: number;
+
+  constructor(props: IProps) {
+    super(props);
+    this.state = {
+      status: 'idle',
+      secondsLeft: 300,
+      submitting: false
+    };
+  }
+
+  public componentWillUnmount(): void {
+    this.clearTimers();
+  }
+
+  public render(): React.ReactElement<IProps> {
+    const {
+      customer,
+      status,
+      message,
+      secondsLeft,
+      requestId,
+      resultCode,
+      resultDescription,
+      selectedCardNo,
+      txnDate,
+      txnTime,
+      txnAmount,
+      merchantName,
+      disputeReason,
+      comment,
+      submitting
+    } = this.state;
+
+    const canAuth: boolean = !!(customer && customer.civilId) && (status === 'customerFound' || status === 'idle');
+    const isWaiting: boolean = status === 'waiting' || status === 'starting';
+
+    const isApproved: boolean = status === 'approved';
+    const canSubmitRefund: boolean =
+      isApproved &&
+      !!selectedCardNo &&
+      !!txnDate &&
+      !!txnTime &&
+      !!txnAmount &&
+      !!merchantName &&
+      !!disputeReason &&
+      !submitting;
+
+    const reasons: Array<{ key: string; text: string }> = [
+      { key: '', text: '-- Select reason --' },
+      { key: 'DUPLICATE', text: 'Duplicate transaction' },
+      { key: 'FRAUD', text: 'Fraud / unauthorized' },
+      { key: 'SERVICE', text: 'Service not received' },
+      { key: 'AMOUNT', text: 'Incorrect amount' },
+      { key: 'OTHER', text: 'Other' }
+    ];
+
+    const cards: ICustomerCard[] = (customer && customer.cards) ? customer.cards : [];
+
+    return (
+      <div style={{ padding: 12, maxWidth: 900 }}>
+        <CustomerLookup
+          apiBaseUrl={this.props.apiBaseUrl}
+          onCustomerFound={this.onCustomerFound}
+          onCustomerNotFound={this.onCustomerNotFound}
+        />
+
+        {customer && (
+          <div style={{ marginTop: 12, border: '1px solid #ddd', padding: 12, borderRadius: 4 }}>
+            <div style={{ marginBottom: 8 }}>
+              <b>Customer:</b> {customer.fullNameEn} / {customer.fullNameAr}
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <b>Civil ID:</b> {customer.civilId}
+            </div>
+
+            <button
+              onClick={this.startPaciAuth}
+              disabled={!canAuth || isWaiting}
+              style={{ padding: '8px 14px' }}
+            >
+              {status === 'starting' ? 'Starting...' : 'Authenticate with PACI'}
+            </button>
+
+            {status === 'waiting' && (
+              <div style={{ marginTop: 10 }}>
+                <div>
+                  <b>RequestId:</b> {requestId}
+                </div>
+                <div>
+                  <b>Time left:</b> {secondsLeft}s
+                </div>
+              </div>
+            )}
+
+            {message && <div style={{ marginTop: 10 }}>{message}</div>}
+
+            {(status === 'approved' || status === 'rejected' || status === 'failed' || status === 'timeout') && (
+              <div style={{ marginTop: 10, fontSize: 12 }}>
+                {resultCode !== undefined && (
+                  <div>
+                    <b>ResultCode:</b> {resultCode}
+                  </div>
+                )}
+                {resultDescription && (
+                  <div>
+                    <b>Description:</b> {resultDescription}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* After PACI approval: choose card + fill dispute details */}
+            {status === 'approved' && (
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #eee' }}>
+                <h4 style={{ margin: '0 0 10px 0' }}>Refund Claim Details</h4>
+
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ display: 'block', marginBottom: 4 }}>
+                    <b>Select Card</b>
+                  </label>
+                  <select
+                    value={selectedCardNo || ''}
+                    onChange={this.onCardSelected}
+                    style={{ padding: 8, width: '100%', maxWidth: 520 }}
+                  >
+                    <option value=''>-- Select card --</option>
+                    {cards.map((c, idx) => (
+                      <option key={(c.cardNo || '') + '_' + idx} value={c.cardNo}>
+                        {c.maskedCardNo}
+                        {c.cardExpire ? ' (Exp: ' + c.cardExpire + ')' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {cards.length === 0 && <div style={{ marginTop: 6 }}>No cards found for this Civil ID.</div>}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, maxWidth: 700 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Transaction date</b>
+                    </label>
+                    <input
+                      type='date'
+                      value={txnDate || ''}
+                      onChange={(e) => this.setState({ txnDate: (e.target as HTMLInputElement).value })}
+                      style={{ padding: 8, width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Transaction time</b>
+                    </label>
+                    <input
+                      type='time'
+                      value={txnTime || ''}
+                      onChange={(e) => this.setState({ txnTime: (e.target as HTMLInputElement).value })}
+                      style={{ padding: 8, width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Transaction amount</b>
+                    </label>
+                    <input
+                      type='text'
+                      value={txnAmount || ''}
+                      onChange={(e) => {
+                        const v = (e.target as HTMLInputElement).value;
+                        // allow digits + one dot
+                        if (/^\d*\.?\d*$/.test(v)) {
+                          this.setState({ txnAmount: v });
+                        }
+                      }}
+                      placeholder='e.g. 12.500'
+                      style={{ padding: 8, width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Merchant name</b>
+                    </label>
+                    <input
+                      type='text'
+                      value={merchantName || ''}
+                      onChange={(e) => this.setState({ merchantName: (e.target as HTMLInputElement).value })}
+                      style={{ padding: 8, width: '100%' }}
+                    />
+                  </div>
+
+                  <div style={{ gridColumn: '1 / span 2' }}>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Dispute reason</b>
+                    </label>
+                    <select
+                      value={disputeReason || ''}
+                      onChange={(e) => this.setState({ disputeReason: (e.target as HTMLSelectElement).value })}
+                      style={{ padding: 8, width: '100%', maxWidth: 520 }}
+                    >
+                      {reasons.map((r) => (
+                        <option key={r.key} value={r.key}>
+                          {r.text}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ gridColumn: '1 / span 2' }}>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Comment</b>
+                    </label>
+                    <textarea
+                      value={comment || ''}
+                      onChange={(e) => this.setState({ comment: (e.target as HTMLTextAreaElement).value })}
+                      style={{ padding: 8, width: '100%', minHeight: 80 }}
+                    />
+                  </div>
+
+                  <div style={{ gridColumn: '1 / span 2' }}>
+                    <label style={{ display: 'block', marginBottom: 4 }}>
+                      <b>Attachment (optional)</b>
+                    </label>
+                    <input
+                      type='file'
+                      onChange={(e) => {
+                        const files = (e.target as HTMLInputElement).files;
+                        this.setState({ attachment: files && files.length > 0 ? files[0] : null });
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={this.submitRefund}
+                    disabled={!canSubmitRefund}
+                    style={{ padding: '8px 14px' }}
+                  >
+                    {submitting ? 'Submitting...' : 'Submit Refund Claim'}
+                  </button>
+
+                  <button
+                    onClick={this.resetFormOnly}
+                    disabled={submitting}
+                    style={{ padding: '8px 14px' }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  private clearTimers = (): void => {
+    if (this.pollTimer !== undefined) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    if (this.countdownTimer !== undefined) {
+      window.clearInterval(this.countdownTimer);
+      this.countdownTimer = undefined;
+    }
+  };
+
+  private onCustomerFound = (customer: ICustomerInfo): void => {
+    this.clearTimers();
+    this.setState({
+      customer,
+      status: 'customerFound',
+      message: undefined,
+      requestId: undefined,
+      secondsLeft: 300,
+      resultCode: undefined,
+      resultDescription: undefined,
+
+      selectedCardNo: undefined,
+      selectedCard: undefined,
+      txnDate: undefined,
+      txnTime: undefined,
+      txnAmount: undefined,
+      merchantName: undefined,
+      disputeReason: undefined,
+      comment: undefined,
+      attachment: null,
+      submitting: false
+    });
+  };
+
+  private onCustomerNotFound = (msg: string): void => {
+    this.clearTimers();
+    this.setState({
+      customer: undefined,
+      status: 'idle',
+      message: msg,
+
+      requestId: undefined,
+      secondsLeft: 300,
+      resultCode: undefined,
+      resultDescription: undefined,
+
+      selectedCardNo: undefined,
+      selectedCard: undefined,
+      txnDate: undefined,
+      txnTime: undefined,
+      txnAmount: undefined,
+      merchantName: undefined,
+      disputeReason: undefined,
+      comment: undefined,
+      attachment: null,
+      submitting: false
+    });
+  };
+
+  private startPaciAuth = async (): Promise<void> => {
+    const customer = this.state.customer;
+    if (!customer || !customer.civilId) {
+      this.setState({ status: 'failed', message: 'Please lookup valid Civil ID first.' });
+      return;
+    }
+
+    this.clearTimers();
+    this.setState({
+      status: 'starting',
+      message: 'Sending PACI authentication request...',
+      secondsLeft: 300,
+      requestId: undefined,
+      resultCode: undefined,
+      resultDescription: undefined
+    });
+
+    try {
+      const url = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/paci/initiate-auth';
+
+      const resp = await apiPost<{ requestId: string }>(url, {
+        authenticationReasonAr: 'الحصول على تفويض العميل لتحديث بيانات البطاقة المدنية',
+        authenticationReasonEn: 'Get Customer Approval to update Civil Details',
+        civilNo: customer.civilId,
+        assuranceLevel: 'Medium',
+        serviceDescriptionEN: 'Refund claim for a Gift Card',
+        serviceDescriptionAR: 'طلب استرداد مبلغ لبطاقة الهدايا',
+        additionalData: '',
+        challenge: ''
+      });
+
+      if (!resp || !resp.requestId) {
+        this.setState({ status: 'failed', message: 'No RequestId returned from PACI initiate API.' });
+        return;
+      }
+
+      this.setState({
+        status: 'waiting',
+        requestId: resp.requestId,
+        message: 'Waiting for customer approval...'
+      });
+
+      this.startCountdown();
+      this.startPolling(resp.requestId);
+    } catch (e: any) {
+      this.setState({ status: 'failed', message: e && e.message ? e.message : 'Failed to initiate PACI auth.' });
+    }
+  };
+
+  private startCountdown = (): void => {
+    this.countdownTimer = window.setInterval(() => {
+      this.setState((prev) => {
+        const next = prev.secondsLeft - 1;
+        if (next <= 0) {
+          this.clearTimers();
+          return {
+            ...prev,
+            secondsLeft: 0,
+            status: 'timeout',
+            message: 'Timed out (5 minutes). No response received.'
+          };
+        }
+        return { ...prev, secondsLeft: next };
+      });
+    }, 1000);
+  };
+
+  private startPolling = (requestId: string): void => {
+    this.pollTimer = window.setInterval(async () => {
+      try {
+        const url =
+          this.props.apiBaseUrl.replace(/\/$/, '') + '/api/paci/status/' + encodeURIComponent(requestId);
+
+        const s = await apiGet<{
+          requestId: string;
+          isProcessed: boolean;
+          resultCode?: number;
+          resultDescription?: string;
+          userAction?: number;
+        }>(url);
+
+        if (!s || !s.isProcessed) return;
+
+        this.clearTimers();
+
+        const rc = s.resultCode;
+        const desc = s.resultDescription;
+
+        if (rc === 10) {
+          this.setState({
+            status: 'approved',
+            resultCode: rc,
+            resultDescription: desc,
+            message: desc || 'Authenticated'
+          });
+        } else if (rc === 40) {
+          this.setState({
+            status: 'rejected',
+            resultCode: rc,
+            resultDescription: desc,
+            message: desc || 'Declined'
+          });
+        } else {
+          this.setState({
+            status: 'failed',
+            resultCode: rc,
+            resultDescription: desc,
+            message: desc || 'Failed'
+          });
+        }
+      } catch (err) {
+        // keep polling quietly
+      }
+    }, 3000);
+  };
+
+  private onCardSelected = (e: React.ChangeEvent<HTMLSelectElement>): void => {
+    const cardNo = e.target.value || '';
+    const customer = this.state.customer;
+
+    let selected: ICustomerCard | undefined;
+    if (customer && customer.cards && cardNo) {
+      for (let i = 0; i < customer.cards.length; i++) {
+        if (customer.cards[i].cardNo === cardNo) {
+          selected = customer.cards[i];
+          break;
+        }
+      }
+    }
+
+    this.setState({
+      selectedCardNo: cardNo || undefined,
+      selectedCard: selected
+    });
+  };
+
+  private resetFormOnly = (): void => {
+    this.setState({
+      selectedCardNo: undefined,
+      selectedCard: undefined,
+      txnDate: undefined,
+      txnTime: undefined,
+      txnAmount: undefined,
+      merchantName: undefined,
+      disputeReason: undefined,
+      comment: undefined,
+      attachment: null,
+      message: undefined
+    });
+  };
+
+  private submitRefund = async (): Promise<void> => {
+    const customer = this.state.customer;
+    const card = this.state.selectedCard;
+    if (!customer || !card) {
+      this.setState({ message: 'Please select a card.' });
+      return;
+    }
+
+    if (this.state.status !== 'approved') {
+      this.setState({ message: 'Customer is not authenticated yet.' });
+      return;
+    }
+
+    // Basic client-side checks
+    if (!this.state.txnDate || !this.state.txnTime || !this.state.txnAmount || !this.state.merchantName || !this.state.disputeReason) {
+      this.setState({ message: 'Please fill all required fields.' });
+      return;
+    }
+
+    this.setState({ submitting: true, message: 'Submitting refund claim...' });
+
+    try {
+      // TODO: replace with your actual refund endpoint and payload
+      // Example: /api/floward/refund/full
+      const url = this.props.apiBaseUrl.replace(/\/$/, '') + '/api/floward/refund/full';
+
+      // You said refund API needs cardExid + userId etc.
+      // Adjust fields to match your server DTO
+      const payload: any = {
+        cardExid: card.cardExid || '',
+        userId: 'operator', // TODO: set from logged-in user
+        tracingId: 'spfx-' + new Date().getTime(),
+
+        // extra info you wanted to capture
+        civilId: customer.civilId,
+        cardNo: card.cardNo,
+        txnDate: this.state.txnDate,
+        txnTime: this.state.txnTime,
+        txnAmount: this.state.txnAmount,
+        merchantName: this.state.merchantName,
+        disputeReason: this.state.disputeReason,
+        comment: this.state.comment || ''
+      };
+
+      // If you want to upload attachment, you'd normally use FormData + multipart.
+      // For now, just ignore attachment or handle it later.
+      // payload.attachmentName = this.state.attachment?.name;
+
+      await apiPost<any>(url, payload);
+
+      this.setState({
+        submitting: false,
+        message: 'Refund claim submitted successfully.'
+      });
+    } catch (e: any) {
+      this.setState({
+        submitting: false,
+        message: e && e.message ? e.message : 'Failed to submit refund claim.'
+      });
+    }
+  };
+}
