@@ -1,0 +1,40 @@
+export interface ICreateCasePayload {
+  caseId: string;
+  civilId: string;
+  customerName: string;
+  createdBy: string;
+}
+
+export class SharePointCaseService {
+  constructor(
+    private spHttpClient: any,
+    private siteUrl: string,
+    private listTitle: string
+  ) {}
+
+  public async createCase(payload: ICreateCasePayload): Promise<number> {
+    const url = `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/items`;
+
+    const res = await this.spHttpClient.post(
+      url,
+      1,
+      {
+        headers: {
+          "Accept": "application/json;odata=nometadata",
+          "Content-Type": "application/json;odata=nometadata"
+        },
+        body: JSON.stringify({
+          Title: payload.caseId,
+          CaseId: payload.caseId,
+          CivilId: payload.civilId,
+          CustomerName: payload.customerName,
+          Status: "New",
+          CreatedByUser: payload.createdBy
+        })
+      }
+    );
+
+    const json = await res.json();
+    return json.Id; // Case list item ID
+  }
+}
