@@ -1,0 +1,334 @@
+import { uniqBy } from "@microsoft/sp-lodash-subset";
+import { WebPartContext } from "@microsoft/sp-webpart-base";
+import { sp, SPBatch } from "@pnp/sp";
+import * as ExcelJS from "exceljs";
+import * as saveAs from "file-saver";
+import { getCurrentContractEmployee, getCurrentUserGroups, getData, IResults, renameObjectKey, wrapBatchPromise } from "../../util";
+
+export const reportUserKPI = async (selectedContract: number, selectedContractYear: number, context: WebPartContext) => {
+	const html =
+		`<div class="row">
+			<h3>
+				<small class="text-muted">User KPI & WorkSteps</small>
+			</h3>
+		</div>
+    <div id="gridUserKPIWorkStep"></div>`;
+
+	$("#content").empty();
+	$("#content").html(html);
+
+	const loadPanel = $(`#indicator`).dxLoadPanel({
+		shadingColor: "rgba(0,0,0,0.4)",
+		position: { of: "#content" },
+		visible: false,
+		showIndicator: true,
+		showPane: true,
+		shading: true,
+		closeOnOutsideClick: false,
+	}).dxLoadPanel("instance");
+
+	loadPanel.show();
+	loadPanel.option("message", "Loading Contracts ....");
+
+	const currentUserGroup = await getCurrentUserGroups();
+	const isMember = currentUserGroup.indexOf("EPMS Admin") > -1;
+	const filter = !isMember ? ` and Employee/DirectManagerEmail eq '${context.pageContext.legacyPageContext.userEmail}'` : "";
+
+	const currentEmployee = await getCurrentContractEmployee(selectedContractYear, context);
+	const selectedYearItem = await sp.web.lists.getByTitle("Year").items.getById(selectedContractYear).get();
+	const selectedYearValue = selectedYearItem.Title;
+
+	let contracts = [];
+
+	const assignRoles = await sp.web.lists
+		.getByTitle("AssignRoles")
+		.items
+		.select("Id")
+		.filter(`EmployeeId eq '${currentEmployee[0].EmployeeId}' and YearId eq ${selectedContractYear} and isDeleted eq false`)
+		.getAll();
+
+	if (assignRoles.length > 0) {
+		const assignRoleChild = await sp.web.lists
+			.getByTitle("AssignRoleGroupDivision")
+			.items
+			.select("Id", "Title")
+			.filter(`YearId eq ${selectedContractYear} and AssignRoleId eq ${assignRoles[0].Id}`)
+			.getAll();
+
+		for (let i = 0; i < assignRoleChild.length; i++) {
+			const PMOEmployee = await sp.web.lists
+				.getByTitle("Contract")
+				.items
+				.select("Id", "EmployeeId")
+				.filter(`(Employee/Title eq '${assignRoleChild[i].Title}' or Employee/Group eq '${assignRoleChild[i].Title}' or Employee/Division eq '${assignRoleChild[i].Title}' or Employee/Department eq '${assignRoleChild[i].Title}') and YearId eq ${selectedContractYear} and isDeleted eq false`)
+				.get();
+
+			contracts = contracts.concat(PMOEmployee);
+		}
+	}
+
+	contracts = uniqBy(contracts, "EmployeeId");
+	const UserKPI = [];
+
+	(async () => {
+		const b: SPBatch = sp.web.createBatch();
+		const res: IResults = {};
+
+		if (contracts.length > 0) {
+			for (let i = 0; i < contracts.length; i++) {
+				const _a: SPBatch = sp.web.createBatch();
+				wrapBatchPromise(sp.web.lists
+					.getByTitle("UserKPI")
+					.items
+					.inBatch(_a)
+					.select("Id", "CategoryId", "SubCategoryId", "ContractId", "KPITypeId", "KPIID", "KPIDescription", "Weight", "Baseline", "EndTarget", "TargetType", "DesiredTo", "Start", "End",
+						"TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4", "Category/Title", "SubCategory/SubCategory", "KPIType/Title", "Contract/Period",
+						"Employee/EmployeeId", "Employee/Title", "Employee/Grade", "Employee/Group", "Employee/Division", "Employee/Department", "Year",
+						"KPIType/IsWorkStepString", "PerformanceQ1", "PerformanceQ2", "PerformanceQ3", "PerformanceQ4", "Contract/EndNegativeResult", "Contract/EndYearResult")
+					.expand("Category", "SubCategory", "KPIType", "Contract", "Employee")
+					.filter(`isDeleted eq false and ContractId eq ${contracts[i].Id} and Year eq '${selectedYearValue}' and Employee/isDeletedString eq false`)
+					.orderBy("Employee/EmployeeId")
+					.get(), res, `UserKPI${i}`);
+
+				await _a.execute().catch(_ => {/**/ });
+			}
+		} else {
+			wrapBatchPromise(sp.web.lists
+				.getByTitle("UserKPI")
+				.items
+				.inBatch(b)
+				.select("Id", "CategoryId", "SubCategoryId", "ContractId", "KPITypeId", "KPIID", "KPIDescription", "Weight", "Baseline", "EndTarget", "TargetType", "DesiredTo", "Start", "End",
+					"TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4", "Category/Title", "SubCategory/SubCategory", "KPIType/Title", "Contract/Period",
+					"Employee/EmployeeId", "Employee/Title", "Employee/Grade", "Employee/Group", "Employee/Division", "Employee/Department", "Year", "KPIType/IsWorkStepString",
+					"PerformanceQ1", "PerformanceQ2", "PerformanceQ3", "PerformanceQ4", "Contract/EndNegativeResult", "Contract/EndYearResult")
+				.expand("Category", "SubCategory", "KPIType", "Contract", "Employee")
+				.filter(`isDeleted eq false and Year eq '${selectedYearValue}' and Employee/isDeletedString eq false${filter}`)
+				.orderBy("Employee/EmployeeId")
+				.top(5000)
+				.get(), res, `UserKPI0`);
+
+			await b.execute().catch(_ => {/**/ });
+		}
+
+		for (let i = 0; i < Object.keys(res).length; i++) {
+			if (res[`UserKPI${i}`] && res[`UserKPI${i}`].data && res[`UserKPI${i}`].data.length > 0) {
+				for (let j = 0; j < res[`UserKPI${i}`].data.length; j++) {
+					const _b: SPBatch = sp.web.createBatch();
+					if (res[`UserKPI${i}`].data[j].KPIType.IsWorkStepString === "true") {
+						wrapBatchPromise(sp.web.lists
+							.getByTitle("WorkStep")
+							.items
+							.inBatch(_b)
+							.select("UserKPIId", "Title", "Percentage", "Start", "End", "TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4")
+							.filter(`UserKPIId eq ${res[`UserKPI${i}`].data[j].Id}`)
+							.get(), res, `WorkStep${i}-${j}`);
+						await _b.execute().catch(_ => {/**/ });
+					}
+				}
+			}
+		}
+
+		return res;
+	})()
+		.then((data) => {
+			const userKPIs = Object.fromEntries(Object.entries(data).filter(([key]) => key.includes("UserKPI")));
+			const workSteps = Object.fromEntries(Object.entries(data).filter(([key]) => key.includes("WorkStep")));
+
+			const userKPI = getData(userKPIs);
+			const workStep = getData(workSteps);
+
+			for (let i = 0; i < userKPI.length; i++) {
+				const WorkStep = workStep.filter((x) => x.UserKPIId === userKPI[i].Id);
+				if (WorkStep.length > 0) {
+					for (let j = 0; j < WorkStep.length; j++) {
+						renameObjectKey("ActualQ1", "WorkStepActualQ1", WorkStep[j]);
+						renameObjectKey("ActualQ2", "WorkStepActualQ2", WorkStep[j]);
+						renameObjectKey("ActualQ3", "WorkStepActualQ3", WorkStep[j]);
+						renameObjectKey("ActualQ4", "WorkStepActualQ4", WorkStep[j]);
+						renameObjectKey("TargetQ1", "WorkStepTargetQ1", WorkStep[j]);
+						renameObjectKey("TargetQ2", "WorkStepTargetQ2", WorkStep[j]);
+						renameObjectKey("TargetQ3", "WorkStepTargetQ3", WorkStep[j]);
+						renameObjectKey("TargetQ4", "WorkStepTargetQ4", WorkStep[j]);
+						renameObjectKey("Start", "WorkStepStart", WorkStep[j]);
+						renameObjectKey("End", "WorkStepEnd", WorkStep[j]);
+
+						/* Remove weight from second workstep*/
+						if (j > 0) {
+							userKPI[i]["Weight"] = "";
+						}
+						/* Remove weight from second workstep */
+
+						const temp = { ...userKPI[i], ...WorkStep[j] };
+						UserKPI.push(temp);
+					}
+				} else {
+					const tempWorkStep = {
+						Title: "",
+						Percentage: "",
+						WorkStepStart: "",
+						WorkStepEnd: "",
+						WorkStepActualQ1: "",
+						WorkStepActualQ2: "",
+						WorkStepActualQ3: "",
+						WorkStepActualQ4: "",
+						WorkStepTargetQ1: "",
+						WorkStepTargetQ2: "",
+						WorkStepTargetQ3: "",
+						WorkStepTargetQ4: ""
+					};
+					const temp = { ...userKPI[i], ...tempWorkStep };
+					UserKPI.push(temp);
+				}
+			}
+
+			grid.option("dataSource", UserKPI);
+			grid.refresh();
+		})
+		.catch(console.warn);
+
+	const grid = $("#gridUserKPIWorkStep").dxDataGrid({
+		columnAutoWidth: true,
+		showBorders: true,
+		showRowLines: true,
+		rowAlternationEnabled: true,
+		paging: {
+			enabled: true,
+			pageSize: 15
+		},
+		sorting: {
+			mode: "multiple"
+		},
+		headerFilter: {
+			visible: true
+		},
+		filterRow: {
+			visible: true,
+			applyFilter: "auto"
+		},
+		dataSource: UserKPI,
+		toolbar: {
+			items: [{
+				location: "after",
+				widget: "dxButton",
+				options: {
+					type: "default",
+					text: "Export to Excel",
+					elementAttr: {
+						id: "btnExportExcel"
+					},
+					onClick: (el) => {
+						const workbook = new ExcelJS.Workbook();
+						const worksheet = workbook.addWorksheet("User KPI & WorkSteps");
+
+						DevExpress.excelExporter.exportDataGrid({
+							worksheet: worksheet,
+							component: grid,
+							customizeCell(options) {
+								options.excelCell.font = { name: "Arial", size: 12 };
+								options.excelCell.alignment = { horizontal: "left" };
+							},
+						}).then(() => {
+							workbook.xlsx.writeBuffer().then((buffer) => {
+								saveAs(new Blob([buffer], { type: "application/octet-stream" }), `User KPI & WorkSteps.xlsx`);
+							});
+						});
+					}
+				}
+			}]
+		},
+		columns: [{
+			dataField: "Year",
+			fixed: true,
+		}, {
+			dataField: "Employee.EmployeeId",
+			caption: "EmployeeId",
+			fixed: true,
+		}, {
+			dataField: "Employee.Title",
+			caption: "Employee Name",
+			width: 120,
+			fixed: true,
+		}, {
+			dataField: "KPIID",
+			caption: "KPIID",
+			fixed: true,
+		}, {
+			dataField: "KPIDescription",
+			caption: "KPIDescription",
+			fixed: true,
+			width: "auto",
+			allowResizing: true
+		}, {
+			dataField: "Employee.Grade",
+			caption: "Grade",
+		}, {
+			dataField: "Employee.Group",
+			caption: "Group",
+		}, {
+			dataField: "Employee.Division",
+			caption: "Division",
+		}, {
+			dataField: "Employee.Department",
+			caption: "Department",
+		}, {
+			dataField: "CategoryId",
+			caption: "Category",
+			calculateDisplayValue: "Category.Title",
+		}, {
+			dataField: "SubCategoryId",
+			caption: "SubCategory",
+			calculateDisplayValue: "SubCategory.SubCategory",
+		}, {
+			dataField: "KPITypeId",
+			caption: "KPIType",
+			calculateDisplayValue: "KPIType.Title",
+		}, "Weight", "Baseline", "EndTarget", "TargetType", "DesiredTo", "Start", "End", "TargetQ1", "ActualQ1", "PerformanceQ1", "TargetQ2", "ActualQ2", "PerformanceQ2",
+			"TargetQ3", "ActualQ3", "PerformanceQ3", "TargetQ4", "ActualQ4", "PerformanceQ4", {
+			dataField: "Title",
+			caption: "WorkStep Objective",
+			width: "auto"
+		}, {
+			dataField: "Percentage",
+			caption: "WorkStep Percentage"
+		}, {
+			dataField: "WorkStepStart",
+			caption: "WorkStep Start"
+		}, {
+			dataField: "WorkStepEnd",
+			caption: "WorkStep End"
+		}, {
+			dataField: "WorkStepTargetQ1",
+			caption: "WorkStep TargetQ1",
+		}, {
+			dataField: "WorkStepActualQ1",
+			caption: "WorkStep ActualQ1",
+		}, {
+			dataField: "WorkStepTargetQ2",
+			caption: "WorkStep TargetQ2",
+		}, {
+			dataField: "WorkStepActualQ2",
+			caption: "WorkStep ActualQ2",
+		}, {
+			dataField: "WorkStepTargetQ3",
+			caption: "WorkStep TargetQ3",
+		}, {
+			dataField: "WorkStepActualQ3",
+			caption: "WorkStep ActualQ3",
+		}, {
+			dataField: "WorkStepTargetQ4",
+			caption: "WorkStep TargetQ4",
+		}, {
+			dataField: "WorkStepActualQ4",
+			caption: "WorkStep ActualQ4",
+		}, {
+			dataField: "Contract.EndNegativeResult",
+			caption: "End Negative Result",
+			width: "auto"
+		}, {
+			dataField: "Contract.EndYearResult",
+			caption: "End Year Result",
+			width: "auto"
+		}],
+	}).dxDataGrid("instance");
+	loadPanel.hide();
+};
