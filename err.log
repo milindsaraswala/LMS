@@ -1,1 +1,184 @@
+import * as React from "react";
+import NintexWorkflowService, {
+  INintexTask,
+  INintexOutcome
+} from "../../common/NintexWorkflowService";
 
+export interface IProps {
+  nintexSvc: NintexWorkflowService;
+  listName: string;
+  itemId: number;
+  onActionCompleted: () => void;
+}
+
+export interface IState {
+  loading: boolean;
+  task: INintexTask | null;
+  outcomes: INintexOutcome[];
+  selectedOutcome?: INintexOutcome;
+  comment: string;
+  submitting: boolean;
+  error?: string;
+}
+
+export default class WorkflowActionPanel extends React.Component<
+  IProps,
+  IState
+> {
+  constructor(props: IProps) {
+    super(props);
+
+    this.state = {
+      loading: true,
+      task: null,
+      outcomes: [],
+      comment: "",
+      submitting: false
+    };
+  }
+
+  public componentDidMount(): void {
+    this.loadTask();
+  }
+
+  private async loadTask(): Promise<void> {
+    try {
+      var task = await this.props.nintexSvc.getRunningTask(
+        this.props.listName,
+        this.props.itemId
+      );
+
+      if (!task || task.taskType !== "FlexiTask") {
+        this.setState({ loading: false, task: null });
+        return;
+      }
+
+      var outcomes = await this.props.nintexSvc.getFlexiTaskOutcomes(
+        task.sharePointTaskId,
+        task.taskListName
+      );
+
+      this.setState({
+        loading: false,
+        task: task,
+        outcomes: outcomes
+      });
+    } catch (e) {
+      this.setState({
+        loading: false,
+        error: "Failed to load workflow task."
+      });
+    }
+  }
+
+  private submit = async (): Promise<void> => {
+    var t = this.state.task;
+    var o = this.state.selectedOutcome;
+
+    if (!t || !o) {
+      return;
+    }
+
+    if (o.commentMode === "Required" && !this.state.comment) {
+      alert("Comment is required.");
+      return;
+    }
+
+    this.setState({ submitting: true });
+
+    try {
+      await this.props.nintexSvc.completeFlexiTask(
+        t.sharePointTaskId,
+        o.name,
+        this.state.comment
+      );
+
+      alert("Action completed successfully.");
+      this.props.onActionCompleted();
+    } catch (e) {
+      alert("Workflow action failed.");
+    } finally {
+      this.setState({ submitting: false });
+    }
+  };
+
+  public render(): React.ReactElement<any> {
+    if (this.state.loading) {
+      return <div>Loading workflow actions...</div>;
+    }
+
+    if (!this.state.task) {
+      return null;
+    }
+
+    return (
+      <div
+        style={{
+          marginTop: 20,
+          padding: 12,
+          border: "1px solid #ddd",
+          background: "#fafafa"
+        }}
+      >
+        <h4>Workflow Actions</h4>
+
+        <div style={{ marginBottom: 8 }}>
+          {this.state.outcomes.map((o) => (
+            <button
+              key={o.id}
+              onClick={() => this.setState({ selectedOutcome: o })}
+              style={{
+                marginRight: 8,
+                padding: "6px 12px",
+                background:
+                  this.state.selectedOutcome &&
+                  this.state.selectedOutcome.id === o.id
+                    ? "#0078d4"
+                    : "#e0e0e0",
+                color:
+                  this.state.selectedOutcome &&
+                  this.state.selectedOutcome.id === o.id
+                    ? "#fff"
+                    : "#000",
+                border: "none"
+              }}
+            >
+              {o.name}
+            </button>
+          ))}
+        </div>
+
+        {this.state.selectedOutcome &&
+          this.state.selectedOutcome.commentMode !== "None" && (
+            <div style={{ marginTop: 10 }}>
+              <div>
+                <b>Comment</b>
+              </div>
+              <textarea
+                value={this.state.comment}
+                onChange={(e) =>
+                  this.setState({ comment: (e.target as HTMLTextAreaElement).value })
+                }
+                style={{ width: "100%", minHeight: 70 }}
+              />
+            </div>
+          )}
+
+        <div style={{ marginTop: 12 }}>
+          <button
+            disabled={this.state.submitting || !this.state.selectedOutcome}
+            onClick={this.submit}
+            style={{
+              padding: "8px 16px",
+              background: "#0078d4",
+              color: "#fff",
+              border: "none"
+            }}
+          >
+            {this.state.submitting ? "Processing..." : "Submit"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
