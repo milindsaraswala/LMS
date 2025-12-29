@@ -1,0 +1,19 @@
+private openExistingCase = async (caseItemId: number) => {
+  const caseInfo = await this.caseSvc.getCaseById(caseItemId);
+  const rows = await this.spSvc.getByCaseId(caseInfo.caseId);
+
+  this.setState({
+    view: "openCase",
+    caseItemId,
+    currentCaseId: caseInfo.caseId,
+    customer: {
+      civilId: caseInfo.civilId,
+      fullNameEn: caseInfo.customerName
+    } as any,
+    existingRows: rows,
+    submittedRows: rows,
+    isCaseLocked: true,
+    isNewCase: false,
+    status: "approved"
+  });
+};
