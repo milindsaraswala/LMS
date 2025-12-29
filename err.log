@@ -1,0 +1,44 @@
+<div style={{
+  display: "flex",
+  gap: 8,
+  marginBottom: 12,
+  alignItems: "center"
+}}>
+  <input
+    type="text"
+    placeholder="Civil ID or Case ID"
+    value={this.state.searchText}
+    onChange={(e) => this.setState({ searchText: e.target.value })}
+    style={{
+      padding: 8,
+      width: 220,
+      border: "1px solid #ccc",
+      borderRadius: 3
+    }}
+  />
+
+  <input
+    type="date"
+    value={this.state.submitDate}
+    onChange={(e) => this.setState({ submitDate: e.target.value })}
+    style={{
+      padding: 8,
+      border: "1px solid #ccc",
+      borderRadius: 3
+    }}
+  />
+
+  <button
+    onClick={this.search}
+    style={{
+      padding: "8px 14px",
+      background: "#0078d4",
+      color: "#fff",
+      border: "none",
+      borderRadius: 3,
+      fontWeight: 600
+    }}
+  >
+    Search
+  </button>
+</div>
