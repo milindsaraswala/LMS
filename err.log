@@ -1,139 +1,199 @@
-import { SPHttpClient, SPHttpClientResponse } from "@microsoft/sp-http";
-import { WebPartContext } from "@microsoft/sp-webpart-base";
+import * as React from "react";
+import NintexWorkflowService, { INintexTask } from "../../common/NintexWorkflowService";
 
-export default class NintexWorkflowService {
-  private spHttpClient: SPHttpClient;
-  private siteUrl: string;
+export interface IWorkflowActionPanelProps {
+  nintexSvc: NintexWorkflowService;
+  listName: string;
+  itemId: number;
+  onActionCompleted: () => void; // refresh parent
+}
 
-  constructor(context: WebPartContext) {
-    this.spHttpClient = context.spHttpClient;
-    this.siteUrl = context.pageContext.web.absoluteUrl.replace(/\/$/, "");
+export interface IWorkflowActionPanelState {
+  loading: boolean;
+  tasks: INintexTask[];
+  error?: string;
+  comment: string;
+  submittingTaskId?: number;
+}
+
+export default class WorkflowActionPanel extends React.Component<
+  IWorkflowActionPanelProps,
+  IWorkflowActionPanelState
+> {
+  constructor(props: IWorkflowActionPanelProps) {
+    super(props);
+
+    this.state = {
+      loading: true,
+      tasks: [],
+      comment: ""
+    };
   }
 
-  // ------------------------------------------------------
-  // Get running workflow tasks for current user + list item
-  // ------------------------------------------------------
-  public async getRunningTasksForItem(
-    listName: string,
-    itemId: number
-  ): Promise<INintexTask[]> {
-
-    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-        <soap:Body>
-          <GetRunningWorkflowTasksForCurrentUserForListItem xmlns="http://nintex.com">
-            <itemId>${itemId}</itemId>
-            <listName>${listName}</listName>
-          </GetRunningWorkflowTasksForCurrentUserForListItem>
-        </soap:Body>
-      </soap:Envelope>`;
-
-    const response: SPHttpClientResponse = await this.spHttpClient.post(
-      `${this.siteUrl}/_vti_bin/NintexWorkflow/workflow.asmx`,
-      SPHttpClient.configurations.v1,
-      {
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          "SOAPAction": "http://nintex.com/GetRunningWorkflowTasksForCurrentUserForListItem",
-          "Accept": "text/xml"
-        },
-        body: soapBody
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Nintex SOAP error ${response.status}`);
-    }
-
-    const text = await response.text();
-    return this.parseTasksFromSoap(text);
+  public componentDidMount(): void {
+    this.loadTasks();
   }
 
-  // ------------------------------------------------------
-  // Complete a workflow task
-  // ------------------------------------------------------
-  public async completeTask(
-    sharePointTaskId: number,
-    outcome: string,
-    comments: string
-  ): Promise<void> {
+  private async loadTasks(): Promise<void> {
+    this.setState({ loading: true, error: undefined });
 
-    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
-      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-        <soap:Body>
-          <CompleteWorkflowTask xmlns="http://nintex.com">
-            <taskId>${sharePointTaskId}</taskId>
-            <outcome>${outcome}</outcome>
-            <comments>${this.escapeXml(comments)}</comments>
-          </CompleteWorkflowTask>
-        </soap:Body>
-      </soap:Envelope>`;
+    try {
+      const tasks = await this.props.nintexSvc.getRunningTasksForItem(
+        this.props.listName,
+        this.props.itemId
+      );
 
-    const response = await this.spHttpClient.post(
-      `${this.siteUrl}/_vti_bin/NintexWorkflow/workflow.asmx`,
-      SPHttpClient.configurations.v1,
-      {
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          "SOAPAction": "http://nintex.com/CompleteWorkflowTask",
-          "Accept": "text/xml"
-        },
-        body: soapBody
-      }
-    );
-
-    if (!response.ok) {
-      const t = await response.text();
-      throw new Error("Failed to complete Nintex task: " + t);
-    }
-  }
-
-  // ------------------------------------------------------
-  // SOAP XML parsing
-  // ------------------------------------------------------
-  private parseTasksFromSoap(xml: string): INintexTask[] {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, "text/xml");
-
-    const taskNodes = doc.getElementsByTagName("UserTask");
-    const tasks: INintexTask[] = [];
-
-    for (let i = 0; i < taskNodes.length; i++) {
-      const n = taskNodes[i];
-
-      const getValue = (tag: string): string =>
-        n.getElementsByTagName(tag)[0]?.textContent || "";
-
-      tasks.push({
-        sharePointTaskId: Number(getValue("SharePointTaskId")),
-        humanWorkflowId: Number(getValue("HumanWorkflowID")),
-        workflowName: getValue("WorkflowName"),
-        taskName: getValue("TaskName"),
-        taskType: getValue("TaskType"),
-        workflowInstanceId: getValue("WorkflowInstanceId")
+      this.setState({ tasks, loading: false });
+    } catch (e) {
+      this.setState({
+        loading: false,
+        error: "Failed to load workflow tasks"
       });
     }
-
-    return tasks;
   }
 
-  // ------------------------------------------------------
-  // Utilities
-  // ------------------------------------------------------
-  private escapeXml(value: string): string {
-    if (!value) {
-      return "";
+  private async executeAction(
+    task: INintexTask,
+    outcome: string
+  ): Promise<void> {
+    if (!this.state.comment) {
+      alert("Please enter comment");
+      return;
     }
 
-    return value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&apos;");
+    this.setState({ submittingTaskId: task.sharePointTaskId });
+
+    try {
+      await this.props.nintexSvc.completeTask(
+        task.sharePointTaskId,
+        outcome,
+        this.state.comment
+      );
+
+      alert(`Action "${outcome}" completed`);
+
+      this.setState({
+        comment: "",
+        submittingTaskId: undefined
+      });
+
+      // refresh tasks + parent UI
+      await this.loadTasks();
+      this.props.onActionCompleted();
+
+    } catch (e) {
+      alert("Workflow action failed");
+      this.setState({ submittingTaskId: undefined });
+    }
+  }
+
+  private renderButtons(task: INintexTask): React.ReactElement {
+    const disabled = this.state.submittingTaskId === task.sharePointTaskId;
+
+    switch (task.taskType) {
+      case "Approval":
+      case "MultiOutcome":
+        return (
+          <>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Approve")}>
+              Approve
+            </button>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Reject")}>
+              Reject
+            </button>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Hold")}>
+              Hold
+            </button>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Amend")}>
+              Send Back
+            </button>
+          </>
+        );
+
+      case "Review":
+        return (
+          <>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Complete")}>
+              Complete
+            </button>
+            <button disabled={disabled} onClick={() => this.executeAction(task, "Reopen")}>
+              Reopen
+            </button>
+          </>
+        );
+
+      default:
+        return <span>No actions available</span>;
+    }
+  }
+
+  public render(): React.ReactElement<any> {
+    const { loading, tasks, error } = this.state;
+
+    if (loading) {
+      return <div>Loading workflow actions...</div>;
+    }
+
+    if (error) {
+      return <div style={{ color: "#b00020" }}>{error}</div>;
+    }
+
+    if (!tasks || tasks.length === 0) {
+      return <div>No pending workflow actions.</div>;
+    }
+
+    return (
+      <div style={panelStyle}>
+        <h4>Workflow Actions</h4>
+
+        <textarea
+          placeholder="Enter comment (mandatory)"
+          value={this.state.comment}
+          onChange={(e) => this.setState({ comment: e.currentTarget.value })}
+          style={commentBox}
+        />
+
+        {tasks.map((task) => (
+          <div key={task.sharePointTaskId} style={taskRow}>
+            <div style={{ fontWeight: 600 }}>
+              {task.taskName} ({task.workflowName})
+            </div>
+
+            <div style={buttonRow}>
+              {this.renderButtons(task)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
 }
+
+/* -------------------- styles -------------------- */
+
+const panelStyle: React.CSSProperties = {
+  marginTop: 20,
+  padding: 12,
+  border: "1px solid #ddd",
+  borderRadius: 4,
+  background: "#fafafa"
+};
+
+const commentBox: React.CSSProperties = {
+  width: "100%",
+  minHeight: 60,
+  padding: 8,
+  marginBottom: 12
+};
+
+const taskRow: React.CSSProperties = {
+  borderTop: "1px solid #eee",
+  paddingTop: 10,
+  marginTop: 10
+};
+
+const buttonRow: React.CSSProperties = {
+  marginTop: 6,
+  display: "flex",
+  gap: 8
+};
