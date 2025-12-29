@@ -1,3 +1,72 @@
-<span style={{ fontSize: 13 }}>
-  {expanded === c.status ? "▼" : "▶"} {c.status} ({c.count})
-</span>
+public async processTask(
+  task: INintexTask,
+  outcome: string,
+  comment: string
+): Promise<void> {
+
+  await this.callProcessFlexiTaskResponse(task, outcome, comment);
+
+  // ✅ LOG AFTER SUCCESS
+  await this.logActionHistory({
+    caseItemId: task.caseItemId,
+    caseId: task.caseId,
+    taskId: task.taskId,
+    taskName: task.taskName,
+    action: outcome,
+    comment: comment,
+    workflowInstanceId: task.workflowInstanceId
+  });
+}
+
+
+private async logActionHistory(data: {
+  caseItemId: number;
+  caseId: string;
+  taskId: number;
+  taskName: string;
+  action: string;
+  comment: string;
+  workflowInstanceId?: string;
+}) {
+  const url =
+    `${this.webUrl}/_api/web/lists/getbytitle('DisputeCaseActionHistory')/items`;
+
+  await this.spHttpClient.post(
+    url,
+    SPHttpClient.configurations.v1,
+    {
+      headers: {
+        "Accept": "application/json;odata=nometadata",
+        "Content-Type": "application/json;odata=nometadata"
+      },
+      body: JSON.stringify({
+        CaseItemId: data.caseItemId,
+        CaseId: data.caseId,
+        TaskId: data.taskId,
+        TaskName: data.taskName,
+        Action: data.action,
+        Comment: data.comment,
+        WorkflowInstanceId: data.workflowInstanceId
+      })
+    }
+  );
+}
+
+if (!this.state.comment || !this.state.comment.trim()) {
+  alert("Comment is mandatory for this action.");
+  return;
+}
+
+<h4>Action History</h4>
+
+{history.map(h => (
+  <div key={h.Id} style={{ padding: 8, borderBottom: "1px solid #eee" }}>
+    <b>{h.Action}</b> by {h.ActionBy.Title}
+    <div style={{ fontSize: 12, color: "#666" }}>
+      {new Date(h.ActionDate).toLocaleString()}
+    </div>
+    {h.Comment && (
+      <div style={{ marginTop: 4 }}>{h.Comment}</div>
+    )}
+  </div>
+))}
