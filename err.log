@@ -1,1 +1,68 @@
+import { SPHttpClient, SPHttpClientResponse } from "@microsoft/sp-http";
+import { ICaseItem, ICaseStatusCount } from "../models/ICaseItem";
 
+export class SharePointCaseService {
+  constructor(
+    private spHttpClient: SPHttpClient,
+    private siteUrl: string,
+    private listTitle: string
+  ) {}
+
+  /* ===============================
+     1. Load status counts
+     =============================== */
+  public async getCaseCounts(): Promise<ICaseStatusCount[]> {
+    const url =
+      `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/items` +
+      `?$select=Id,Status`;
+
+    const res = await this.spHttpClient.get(url, SPHttpClient.configurations.v1);
+    const json = await res.json();
+
+    const map: { [key: string]: number } = {};
+    json.value.forEach((i: any) => {
+      map[i.Status] = (map[i.Status] || 0) + 1;
+    });
+
+    return Object.keys(map).map((k) => ({
+      status: k,
+      count: map[k]
+    }));
+  }
+
+  /* ===============================
+     2. Load cases by status (paged)
+     =============================== */
+  public async getCasesByStatus(
+    status: string,
+    nextUrl?: string
+  ): Promise<{ items: ICaseItem[]; next?: string }> {
+
+    const url =
+      nextUrl ??
+      `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/items` +
+      `?$select=Id,CaseId,CivilId,CustomerName,Status,Created` +
+      `&$filter=Status eq '${status}'` +
+      `&$orderby=Created desc` +
+      `&$top=50`;
+
+    const res: SPHttpClientResponse =
+      await this.spHttpClient.get(url, SPHttpClient.configurations.v1);
+
+    const json = await res.json();
+
+    const items: ICaseItem[] = json.value.map((i: any) => ({
+      id: i.Id,
+      caseId: i.CaseId,
+      civilId: i.CivilId,
+      customerName: i.CustomerName,
+      status: i.Status,
+      created: i.Created
+    }));
+
+    return {
+      items,
+      next: json.__next
+    };
+  }
+}
