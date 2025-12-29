@@ -1,1 +1,74 @@
+public async getCaseById(itemId: number): Promise<{
+  caseId: string;
+  civilId: string;
+  customerName: string;
+  mobileNumber?: string;
+  status?: string;
+}> {
+  const url =
+    `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/items(${itemId})` +
+    `?$select=Id,CaseId,CivilId,CustomerName,MobileNumber,Status`;
 
+  const res = await this.spHttpClient.get(
+    url,
+    this.spHttpClient.configurations.v1,
+    {
+      headers: {
+        Accept: "application/json;odata=nometadata"
+      }
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error("Failed to load case item");
+  }
+
+  const item = await res.json();
+
+  return {
+    caseId: item.CaseId,
+    civilId: item.CivilId,
+    customerName: item.CustomerName,
+    mobileNumber: item.MobileNumber,
+    status: item.Status
+  };
+}
+
+
+public async getByCaseId(caseId: string): Promise<IExistingDisputeRow[]> {
+  const url =
+    `${this.siteUrl}/_api/web/lists/getbytitle('${this.listTitle}')/items` +
+    `?$filter=CaseId eq '${caseId}'` +
+    `&$select=Id,CaseId,CivilId,Status,MaskedCardNo,CardExId,TxnDate,TxnTime,TxnAmount,MerchantName,DisputeReason,Created`;
+
+  const res = await this.spHttpClient.get(
+    url,
+    this.spHttpClient.configurations.v1,
+    {
+      headers: {
+        Accept: "application/json;odata=nometadata"
+      }
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error("Failed to load dispute items");
+  }
+
+  const json = await res.json();
+
+  return (json.value || []).map((i: any) => ({
+    id: i.Id,
+    caseId: i.CaseId,
+    civilId: i.CivilId,
+    status: i.Status,
+    cardMasked: i.MaskedCardNo,
+    cardExId: i.CardExId,
+    txnDate: i.TxnDate,
+    txnTime: i.TxnTime,
+    txnAmount: i.TxnAmount,
+    merchantName: i.MerchantName,
+    disputeReason: i.DisputeReason,
+    created: i.Created
+  }));
+}
