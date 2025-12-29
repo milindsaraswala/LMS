@@ -1,1 +1,116 @@
+import * as React from "react";
+import { SharePointCaseService } from "../common/SharePointCaseService";
+import { ICaseItem, ICaseStatusCount } from "../models/ICaseItem";
 
+interface IProps {
+  caseSvc: SharePointCaseService;
+  onSelectCase: (caseId: string) => void;
+}
+
+interface IState {
+  counts: ICaseStatusCount[];
+  expanded: string | null;
+  cases: { [status: string]: ICaseItem[] };
+  paging: { [status: string]: string | undefined };
+  loading: boolean;
+}
+
+export default class CaseDashboard extends React.Component<IProps, IState> {
+  state: IState = {
+    counts: [],
+    expanded: null,
+    cases: {},
+    paging: {},
+    loading: false
+  };
+
+  async componentDidMount() {
+    const counts = await this.props.caseSvc.getCaseCounts();
+    this.setState({ counts });
+  }
+
+  private toggleStatus = async (status: string) => {
+    if (this.state.expanded === status) {
+      this.setState({ expanded: null });
+      return;
+    }
+
+    this.setState({ expanded: status });
+
+    if (!this.state.cases[status]) {
+      await this.loadCases(status);
+    }
+  };
+
+  private loadCases = async (status: string) => {
+    this.setState({ loading: true });
+
+    const res = await this.props.caseSvc.getCasesByStatus(status);
+
+    this.setState((prev) => ({
+      cases: { ...prev.cases, [status]: res.items },
+      paging: { ...prev.paging, [status]: res.next },
+      loading: false
+    }));
+  };
+
+  private loadMore = async (status: string) => {
+    const next = this.state.paging[status];
+    if (!next) return;
+
+    const res = await this.props.caseSvc.getCasesByStatus(status, next);
+
+    this.setState((prev) => ({
+      cases: {
+        ...prev.cases,
+        [status]: [...prev.cases[status], ...res.items]
+      },
+      paging: { ...prev.paging, [status]: res.next }
+    }));
+  };
+
+  render() {
+    const { counts, expanded, cases } = this.state;
+
+    return (
+      <div>
+        <h3>Case Inbox</h3>
+
+        {counts.map((c) => (
+          <div key={c.status}>
+            <div
+              style={{ cursor: "pointer", fontWeight: 600 }}
+              onClick={() => this.toggleStatus(c.status)}
+            >
+              ▶ {c.status} ({c.count})
+            </div>
+
+            {expanded === c.status && (
+              <div style={{ marginLeft: 20 }}>
+                {(cases[c.status] || []).map((cs) => (
+                  <div
+                    key={cs.id}
+                    style={{
+                      padding: 6,
+                      borderBottom: "1px solid #eee",
+                      cursor: "pointer"
+                    }}
+                    onClick={() => this.props.onSelectCase(cs.caseId)}
+                  >
+                    <b>{cs.caseId}</b> – {cs.customerName}
+                  </div>
+                ))}
+
+                {this.state.paging[c.status] && (
+                  <button onClick={() => this.loadMore(c.status)}>
+                    Load more
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+}
