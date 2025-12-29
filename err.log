@@ -1,226 +1,146 @@
-import { WebPartContext } from "@microsoft/sp-webpart-base";
-import { INintexOutcome, INintexTask } from "../models/INintexTask";
-import { SPHttpClient } from "@microsoft/sp-http";
+export interface ICaseActionHistory {
+  Id: number;
+  caseItemId: number;
+  caseId?: string;
+  taskId?: number;
+  taskName?: string;
+  action: string;
+  comment?: string;
+  actionBy?: string;
+  actionDate?: string;
+}
 
-export default class NintexWorkflowService {
-  private context: WebPartContext;
-  private siteUrl: string;
+public async getCaseActionHistory(caseItemId: number): Promise<ICaseActionHistory[]> {
 
-  constructor(context: WebPartContext) {
-    this.context = context;
-    this.siteUrl = context.pageContext.web.absoluteUrl;
+  const url =
+    `${this.siteUrl}/_api/web/lists/getbytitle('DisputeCaseActionHistory')/items` +
+    `?$select=Id,CaseItemId,CaseId,TaskId,TaskName,Action,Comment,ActionDate,ActionBy/Title` +
+    `&$expand=ActionBy` +
+    `&$filter=CaseItemId eq ${caseItemId}` +
+    `&$orderby=ActionDate desc`;
+
+  const resp = await this.spHttpClient.get(
+    url,
+    SPHttpClient.configurations.v1
+  );
+
+  const json = await resp.json();
+
+  return (json.value || []).map((i: any) => ({
+    Id: i.Id,
+    caseItemId: i.CaseItemId,
+    caseId: i.CaseId,
+    taskId: i.TaskId,
+    taskName: i.TaskName,
+    action: i.Action,
+    comment: i.Comment,
+    actionDate: i.ActionDate,
+    actionBy: i.ActionBy ? i.ActionBy.Title : ""
+  }));
+}
+
+import * as React from "react";
+import { SharePointCaseService } from "../../common";
+import { ICaseActionHistory } from "../../models/ICaseActionHistory";
+
+interface IProps {
+  caseSvc: SharePointCaseService;
+  caseItemId: number;
+}
+
+interface IState {
+  items: ICaseActionHistory[];
+  loading: boolean;
+}
+
+export default class CaseActionHistoryPanel extends React.Component<IProps, IState> {
+
+  state: IState = {
+    items: [],
+    loading: true
+  };
+
+  async componentDidMount() {
+    await this.load();
   }
 
-  /* ============================
-     EXISTING METHODS (UNCHANGED)
-     ============================ */
-
-  public async getRunningTask(
-    listName: string,
-    itemId: number
-  ): Promise<INintexTask | null> {
-
-    const soapBody =
-      "<?xml version='1.0' encoding='utf-8'?>" +
-      "<soap:Envelope xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' " +
-      "xmlns:xsd='http://www.w3.org/2001/XMLSchema' " +
-      "xmlns:soap='http://schemas.xmlsoap.org/soap/envelope/'>" +
-      "<soap:Body>" +
-      "<GetRunningWorkflowTasksForCurrentUserForListItem xmlns='http://nintex.com'>" +
-      "<itemId>" + itemId + "</itemId>" +
-      "<listName>" + listName + "</listName>" +
-      "</GetRunningWorkflowTasksForCurrentUserForListItem>" +
-      "</soap:Body>" +
-      "</soap:Envelope>";
-
-    const response = await fetch(
-      this.siteUrl + "/_vti_bin/NintexWorkflow/workflow.asmx",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          "SOAPAction":
-            "http://nintex.com/GetRunningWorkflowTasksForCurrentUserForListItem"
-        },
-        body: soapBody
-      }
-    );
-
-    const text = await response.text();
-    const xml = new DOMParser().parseFromString(text, "text/xml");
-
-    const taskNodes = xml.getElementsByTagName("UserTask");
-    if (!taskNodes || taskNodes.length === 0) {
-      return null;
+  async componentDidUpdate(prev: IProps) {
+    if (prev.caseItemId !== this.props.caseItemId) {
+      await this.load();
     }
-
-    const task = taskNodes[0];
-
-    return {
-      sharePointTaskId: parseInt(
-        task.getElementsByTagName("SharePointTaskId")[0].textContent,
-        10
-      ),
-      taskName: task.getElementsByTagName("TaskName")[0].textContent,
-      taskType: task.getElementsByTagName("TaskType")[0].textContent,
-      taskListName: "Workflow Tasks"
-    };
   }
 
-  public async getFlexiTaskOutcomes(
-    taskId: number,
-    taskListName: string
-  ): Promise<INintexOutcome[]> {
-
-    const soapBody =
-      "<?xml version='1.0' encoding='utf-8'?>" +
-      "<soap:Envelope xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' " +
-      "xmlns:xsd='http://www.w3.org/2001/XMLSchema' " +
-      "xmlns:soap='http://schemas.xmlsoap.org/soap/envelope/'>" +
-      "<soap:Body>" +
-      "<GetOutcomesForFlexiTask xmlns='http://nintex.com'>" +
-      "<spTaskId>" + taskId + "</spTaskId>" +
-      "<taskListName>" + taskListName + "</taskListName>" +
-      "</GetOutcomesForFlexiTask>" +
-      "</soap:Body>" +
-      "</soap:Envelope>";
-
-    const response = await fetch(
-      this.siteUrl + "/_vti_bin/NintexWorkflow/workflow.asmx",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          "SOAPAction": "http://nintex.com/GetOutcomesForFlexiTask"
-        },
-        body: soapBody
-      }
-    );
-
-    const text = await response.text();
-    const xml = new DOMParser().parseFromString(text, "text/xml");
-
-    const outcomeNodes = xml.getElementsByTagName("ConfiguredOutcome");
-    const results: INintexOutcome[] = [];
-
-    for (let i = 0; i < outcomeNodes.length; i++) {
-      const n = outcomeNodes[i];
-
-      results.push({
-        id: parseInt(n.getAttribute("Id"), 10),
-        name: n.getAttribute("Name"),
-        commentMode: n.getAttribute("CommentMode") as any
-      });
-    }
-
-    return results;
+  private async load() {
+    this.setState({ loading: true });
+    const items = await this.props.caseSvc.getCaseActionHistory(this.props.caseItemId);
+    this.setState({ items, loading: false });
   }
 
-  public async completeFlexiTask(
-    taskId: number,
-    outcome: string,
-    comment: string,
-    taskListName: string
-  ): Promise<void> {
+  render() {
+    const { items, loading } = this.state;
 
-    const soapBody =
-      "<?xml version='1.0' encoding='utf-8'?>" +
-      "<soap:Envelope xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' " +
-      "xmlns:xsd='http://www.w3.org/2001/XMLSchema' " +
-      "xmlns:soap='http://schemas.xmlsoap.org/soap/envelope/'>" +
-      "<soap:Body>" +
-      "<ProcessFlexiTaskResponse xmlns='http://nintex.com'>" +
-      "<comments>" + (comment || "") + "</comments>" +
-      "<outcome>" + outcome + "</outcome>" +
-      "<spTaskId>" + taskId + "</spTaskId>" +
-      "<taskListName>" + taskListName + "</taskListName>" +
-      "</ProcessFlexiTaskResponse>" +
-      "</soap:Body>" +
-      "</soap:Envelope>";
+    return (
+      <div style={{ marginTop: 24 }}>
+        <h4>Task Action History</h4>
 
-    await fetch(
-      this.siteUrl + "/_vti_bin/NintexWorkflow/workflow.asmx",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/xml; charset=utf-8",
-          "SOAPAction": "http://nintex.com/ProcessFlexiTaskResponse"
-        },
-        body: soapBody
-      }
+        {loading && <div>Loading history...</div>}
+
+        {!loading && items.length === 0 && (
+          <div style={{ color: "#777" }}>
+            No actions recorded yet.
+          </div>
+        )}
+
+        {!loading && items.map(h => (
+          <div
+            key={h.Id}
+            style={{
+              padding: 10,
+              marginBottom: 8,
+              borderLeft: "4px solid #0078d4",
+              background: "#f8f9fb"
+            }}>
+            <div style={{ fontWeight: 600 }}>
+              {h.action}
+            </div>
+
+            <div style={{ fontSize: 12, color: "#555" }}>
+              {this.formatDate(h.actionDate)} · {h.actionBy}
+            </div>
+
+            {h.taskName && (
+              <div style={{ fontSize: 12, color: "#777" }}>
+                Task: {h.taskName}
+              </div>
+            )}
+
+            {h.comment && (
+              <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                {h.comment}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     );
   }
 
-  /* ==================================
-     NEW METHOD (USE THIS FROM UI)
-     ================================== */
-
-  public async completeTaskWithHistory(params: {
-    task: INintexTask;
-    outcome: string;
-    comment: string;
-    caseItemId: number;
-    caseId: string;
-  }): Promise<void> {
-
-    if (!params.comment || !params.comment.trim()) {
-      throw new Error("Comment is mandatory.");
-    }
-
-    // 1️⃣ Complete Nintex task
-    await this.completeFlexiTask(
-      params.task.sharePointTaskId,
-      params.outcome,
-      params.comment,
-      params.task.taskListName
-    );
-
-    // 2️⃣ Log history AFTER success
-    await this.logActionHistory({
-      caseItemId: params.caseItemId,
-      caseId: params.caseId,
-      taskId: params.task.sharePointTaskId,
-      taskName: params.task.taskName,
-      action: params.outcome,
-      comment: params.comment
+  private formatDate(d?: string): string {
+    if (!d) return "";
+    return new Date(d).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
     });
   }
-
-  /* ============================
-     PRIVATE – HISTORY LOGGING
-     ============================ */
-
-  private async logActionHistory(data: {
-    caseItemId: number;
-    caseId: string;
-    taskId: number;
-    taskName: string;
-    action: string;
-    comment: string;
-  }): Promise<void> {
-
-    const url =
-      this.siteUrl +
-      "/_api/web/lists/getbytitle('DisputeCaseActionHistory')/items";
-
-    await this.context.spHttpClient.post(
-      url,
-      SPHttpClient.configurations.v1,
-      {
-        headers: {
-          "Accept": "application/json;odata=nometadata",
-          "Content-Type": "application/json;odata=nometadata"
-        },
-        body: JSON.stringify({
-          Title: data.action,
-          CaseItemId: data.caseItemId,
-          CaseId: data.caseId,
-          TaskId: data.taskId,
-          TaskName: data.taskName,
-          Action: data.action,
-          Comment: data.comment
-        })
-      }
-    );
-  }
 }
+
+
+{this.state.caseItemId && (
+  <CaseActionHistoryPanel
+    caseSvc={this.caseSvc}
+    caseItemId={this.state.caseItemId}
+  />
+)}
