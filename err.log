@@ -1,0 +1,139 @@
+import { SPHttpClient, SPHttpClientResponse } from "@microsoft/sp-http";
+import { WebPartContext } from "@microsoft/sp-webpart-base";
+
+export default class NintexWorkflowService {
+  private spHttpClient: SPHttpClient;
+  private siteUrl: string;
+
+  constructor(context: WebPartContext) {
+    this.spHttpClient = context.spHttpClient;
+    this.siteUrl = context.pageContext.web.absoluteUrl.replace(/\/$/, "");
+  }
+
+  // ------------------------------------------------------
+  // Get running workflow tasks for current user + list item
+  // ------------------------------------------------------
+  public async getRunningTasksForItem(
+    listName: string,
+    itemId: number
+  ): Promise<INintexTask[]> {
+
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <GetRunningWorkflowTasksForCurrentUserForListItem xmlns="http://nintex.com">
+            <itemId>${itemId}</itemId>
+            <listName>${listName}</listName>
+          </GetRunningWorkflowTasksForCurrentUserForListItem>
+        </soap:Body>
+      </soap:Envelope>`;
+
+    const response: SPHttpClientResponse = await this.spHttpClient.post(
+      `${this.siteUrl}/_vti_bin/NintexWorkflow/workflow.asmx`,
+      SPHttpClient.configurations.v1,
+      {
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          "SOAPAction": "http://nintex.com/GetRunningWorkflowTasksForCurrentUserForListItem",
+          "Accept": "text/xml"
+        },
+        body: soapBody
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Nintex SOAP error ${response.status}`);
+    }
+
+    const text = await response.text();
+    return this.parseTasksFromSoap(text);
+  }
+
+  // ------------------------------------------------------
+  // Complete a workflow task
+  // ------------------------------------------------------
+  public async completeTask(
+    sharePointTaskId: number,
+    outcome: string,
+    comments: string
+  ): Promise<void> {
+
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+      <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <CompleteWorkflowTask xmlns="http://nintex.com">
+            <taskId>${sharePointTaskId}</taskId>
+            <outcome>${outcome}</outcome>
+            <comments>${this.escapeXml(comments)}</comments>
+          </CompleteWorkflowTask>
+        </soap:Body>
+      </soap:Envelope>`;
+
+    const response = await this.spHttpClient.post(
+      `${this.siteUrl}/_vti_bin/NintexWorkflow/workflow.asmx`,
+      SPHttpClient.configurations.v1,
+      {
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          "SOAPAction": "http://nintex.com/CompleteWorkflowTask",
+          "Accept": "text/xml"
+        },
+        body: soapBody
+      }
+    );
+
+    if (!response.ok) {
+      const t = await response.text();
+      throw new Error("Failed to complete Nintex task: " + t);
+    }
+  }
+
+  // ------------------------------------------------------
+  // SOAP XML parsing
+  // ------------------------------------------------------
+  private parseTasksFromSoap(xml: string): INintexTask[] {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, "text/xml");
+
+    const taskNodes = doc.getElementsByTagName("UserTask");
+    const tasks: INintexTask[] = [];
+
+    for (let i = 0; i < taskNodes.length; i++) {
+      const n = taskNodes[i];
+
+      const getValue = (tag: string): string =>
+        n.getElementsByTagName(tag)[0]?.textContent || "";
+
+      tasks.push({
+        sharePointTaskId: Number(getValue("SharePointTaskId")),
+        humanWorkflowId: Number(getValue("HumanWorkflowID")),
+        workflowName: getValue("WorkflowName"),
+        taskName: getValue("TaskName"),
+        taskType: getValue("TaskType"),
+        workflowInstanceId: getValue("WorkflowInstanceId")
+      });
+    }
+
+    return tasks;
+  }
+
+  // ------------------------------------------------------
+  // Utilities
+  // ------------------------------------------------------
+  private escapeXml(value: string): string {
+    if (!value) {
+      return "";
+    }
+
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+}
