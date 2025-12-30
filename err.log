@@ -1,0 +1,48 @@
+{this.state.showCommentModal && (
+  <div
+    style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(0,0,0,0.4)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1000
+    }}>
+    <div
+      style={{
+        background: "#fff",
+        padding: 16,
+        width: 450,
+        maxHeight: "70%",
+        overflowY: "auto",
+        borderRadius: 4
+      }}>
+      <h4>Transaction Comment</h4>
+
+      <div
+        style={{
+          whiteSpace: "pre-wrap",
+          marginTop: 8,
+          fontSize: 14
+        }}>
+        {this.state.selectedComment}
+      </div>
+
+      <div style={{ textAlign: "right", marginTop: 16 }}>
+        <button
+          onClick={() =>
+            this.setState({
+              showCommentModal: false,
+              selectedComment: undefined
+            })
+          }>
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
