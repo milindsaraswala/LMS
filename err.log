@@ -1,27 +1,35 @@
-// common/CaseStatus.ts
+// common/CaseStatusCalculator.ts
+import { TransactionStatus, CaseStatus } from "./CaseStatus";
 
-export const TransactionStatus = {
-  New: "New",
-  RefundInitiated: "Refund Initiated",
-  PartialRefundCompleted: "Partial Refund Completed",
-  FullRefundCompleted: "Full Refund Completed",
-  Rejected: "Rejected"
-} as const;
+export function calculateCaseStatus(
+  txStatuses: string[]
+): string {
 
-export type TransactionStatusType =
-  typeof TransactionStatus[keyof typeof TransactionStatus];
+  const unique = Array.from(new Set(txStatuses));
 
-export const CaseStatus = {
-  New: "New",
-  InProgress: "In Progress",
-  PartiallyResolved: "Partially Resolved",
-  Resolved: "Resolved",
-  Rejected: "Rejected"
-} as const;
+  if (unique.every(s => s === TransactionStatus.Rejected)) {
+    return CaseStatus.Rejected;
+  }
 
-export type CaseStatusType =
-  typeof CaseStatus[keyof typeof CaseStatus];
+  if (unique.every(s =>
+    s === TransactionStatus.FullRefundCompleted ||
+    s === TransactionStatus.Rejected
+  )) {
+    return CaseStatus.Resolved;
+  }
 
+  if (unique.some(s => s === TransactionStatus.PartialRefundCompleted)) {
+    return CaseStatus.PartiallyResolved;
+  }
 
+  if (
+    unique.some(s =>
+      s === TransactionStatus.RefundInitiated ||
+      s === TransactionStatus.New
+    )
+  ) {
+    return CaseStatus.InProgress;
+  }
 
-
+  return CaseStatus.New;
+}
