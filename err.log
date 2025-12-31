@@ -1,0 +1,58 @@
+// common/CaseStatusCalculator.ts
+import { TransactionStatus, CaseStatus } from "./CaseStatus";
+
+export function calculateCaseStatus(txStatuses: string[]): string {
+  // Build unique list manually (ES5 safe)
+  var unique: string[] = [];
+  for (var i = 0; i < txStatuses.length; i++) {
+    if (unique.indexOf(txStatuses[i]) === -1) {
+      unique.push(txStatuses[i]);
+    }
+  }
+
+  // all rejected
+  var allRejected = true;
+  for (var j = 0; j < unique.length; j++) {
+    if (unique[j] !== TransactionStatus.Rejected) {
+      allRejected = false;
+      break;
+    }
+  }
+  if (allRejected) {
+    return CaseStatus.Rejected;
+  }
+
+  // resolved (full refund or rejected)
+  var resolved = true;
+  for (var k = 0; k < unique.length; k++) {
+    if (
+      unique[k] !== TransactionStatus.FullRefundCompleted &&
+      unique[k] !== TransactionStatus.Rejected
+    ) {
+      resolved = false;
+      break;
+    }
+  }
+  if (resolved) {
+    return CaseStatus.Resolved;
+  }
+
+  // partially resolved
+  for (var m = 0; m < unique.length; m++) {
+    if (unique[m] === TransactionStatus.PartialRefundCompleted) {
+      return CaseStatus.PartiallyResolved;
+    }
+  }
+
+  // in progress
+  for (var n = 0; n < unique.length; n++) {
+    if (
+      unique[n] === TransactionStatus.RefundInitiated ||
+      unique[n] === TransactionStatus.New
+    ) {
+      return CaseStatus.InProgress;
+    }
+  }
+
+  return CaseStatus.New;
+}
