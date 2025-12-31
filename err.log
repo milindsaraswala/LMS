@@ -1,35 +1,28 @@
-// common/CaseStatusCalculator.ts
-import { TransactionStatus, CaseStatus } from "./CaseStatus";
+  public async updateRefundStatus(itemId: number, status: string): Promise<void> {
+    const url =
+      `${this.siteUrl}/_api/web/lists/getbytitle('${encodeURIComponent(this.listTitle)}')/items(${itemId})`;
 
-export function calculateCaseStatus(
-  txStatuses: string[]
-): string {
+    const body = {
+      __metadata: { type: "SP.Data.FlowardDisputesListItem" },
+      RefundStatus: status
+    };
 
-  const unique = Array.from(new Set(txStatuses));
+    const resp: SPHttpClientResponse = await this.spHttpClient.post(
+      url,
+      SPHttpClient.configurations.v1,
+      {
+        headers: {
+          "Accept": "application/json;odata=verbose",
+          "Content-Type": "application/json;odata=verbose",
+          "IF-MATCH": "*",
+          "X-HTTP-Method": "MERGE"
+        },
+        body: JSON.stringify(body)
+      }
+    );
 
-  if (unique.every(s => s === TransactionStatus.Rejected)) {
-    return CaseStatus.Rejected;
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error("Failed to update refund status: " + t);
+    }
   }
-
-  if (unique.every(s =>
-    s === TransactionStatus.FullRefundCompleted ||
-    s === TransactionStatus.Rejected
-  )) {
-    return CaseStatus.Resolved;
-  }
-
-  if (unique.some(s => s === TransactionStatus.PartialRefundCompleted)) {
-    return CaseStatus.PartiallyResolved;
-  }
-
-  if (
-    unique.some(s =>
-      s === TransactionStatus.RefundInitiated ||
-      s === TransactionStatus.New
-    )
-  ) {
-    return CaseStatus.InProgress;
-  }
-
-  return CaseStatus.New;
-}
