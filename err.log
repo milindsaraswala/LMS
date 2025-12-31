@@ -1,1 +1,81 @@
+import { SPHttpClient, SPHttpClientResponse } from "@microsoft/sp-http";
 
+export default class SharePointCaseService {
+  private spHttpClient: SPHttpClient;
+  private siteUrl: string;
+  private listTitle: string;
+
+  constructor(spHttpClient: SPHttpClient, siteUrl: string, listTitle: string) {
+    this.spHttpClient = spHttpClient;
+    this.siteUrl = siteUrl;
+    this.listTitle = listTitle;
+  }
+
+  public async getByCaseItemId(caseItemId: number): Promise<any> {
+    const url =
+      this.siteUrl +
+      "/_api/web/lists/getbytitle('" +
+      encodeURIComponent(this.listTitle) +
+      "')/items(" +
+      caseItemId +
+      ")";
+
+    const resp: SPHttpClientResponse = await this.spHttpClient.get(
+      url,
+      SPHttpClient.configurations.v1,
+      {
+        headers: {
+          Accept: "application/json;odata=nometadata"
+        }
+      }
+    );
+
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error("Failed to load case: " + t);
+    }
+
+    return await resp.json();
+  }
+}
+
+
+public async updateCaseStatus(
+  caseItemId: number,
+  newStatus: string
+): Promise<void> {
+
+  const url =
+    this.siteUrl +
+    "/_api/web/lists/getbytitle('" +
+    encodeURIComponent(this.listTitle) +
+    "')/items(" +
+    caseItemId +
+    ")";
+
+  const body = {
+    __metadata: {
+      type: "SP.Data.DisputeCasesListItem"
+    },
+    CaseStatus: newStatus
+  };
+
+  const resp: SPHttpClientResponse = await this.spHttpClient.post(
+    url,
+    SPHttpClient.configurations.v1,
+    {
+      headers: {
+        Accept: "application/json;odata=verbose",
+        "Content-Type": "application/json;odata=verbose",
+        "IF-MATCH": "*",
+        "X-HTTP-Method": "MERGE"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error("Failed to update case status: " + t);
+  }
+}
