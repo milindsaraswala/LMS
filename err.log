@@ -1,1 +1,27 @@
+// common/CaseStatus.ts
+
+export const TransactionStatus = {
+  New: "New",
+  RefundInitiated: "Refund Initiated",
+  PartialRefundCompleted: "Partial Refund Completed",
+  FullRefundCompleted: "Full Refund Completed",
+  Rejected: "Rejected"
+} as const;
+
+export type TransactionStatusType =
+  typeof TransactionStatus[keyof typeof TransactionStatus];
+
+export const CaseStatus = {
+  New: "New",
+  InProgress: "In Progress",
+  PartiallyResolved: "Partially Resolved",
+  Resolved: "Resolved",
+  Rejected: "Rejected"
+} as const;
+
+export type CaseStatusType =
+  typeof CaseStatus[keyof typeof CaseStatus];
+
+
+
 
