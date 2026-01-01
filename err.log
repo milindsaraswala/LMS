@@ -1,42 +1,32 @@
-import { TransactionStatus } from "../models/IDisputeTransaction";
-import { CaseStatus } from "../models/ICaseStatus";
+ public async updateCaseDeepLink(caseItemId: number, caseItemIdEncoded: string, deepLink: string): Promise<void> {
+    const url =
+      `${this.siteUrl}/_api/web/lists/getbytitle('DisputeCases')/items(${caseItemId})`;
 
-export function calculateCaseStatus(
-  transactionStatuses: TransactionStatus[],
-  nintexStatus?: "Hold" | "Reject" | null
-): CaseStatus {
+    const body = {
+      __metadata: {
+        type: "SP.Data.DisputeCasesListItem"
+      },
+      EncodedCaseId: caseItemIdEncoded,
+      CaseDeepLink: deepLink
+    };
 
-  // 1️⃣ Nintex overrides everything
-  if (nintexStatus === "Hold") return "On Hold";
-  if (nintexStatus === "Reject") return "Rejected";
+    const resp: SPHttpClientResponse = await this.spHttpClient.post(
+      url,
+      SPHttpClient.configurations.v1,
+      {
+        headers: {
+          "Accept": "application/json;odata=verbose",
+          "Content-Type": "application/json;odata=verbose",
+          "IF-MATCH": "*",
+          "X-HTTP-Method": "MERGE"
+        },
+        body: JSON.stringify(body)
+      }
+    );
 
-  if (!transactionStatuses || transactionStatuses.length === 0) {
-    return "New";
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error("Failed to update refund status: " + t);
+    }
   }
-
-  const allNew = transactionStatuses.every(s => s === "New");
-  if (allNew) return "New";
-
-  const allRejected = transactionStatuses.every(s => s === "Rejected");
-  if (allRejected) return "Rejected";
-
-  const allFullRefund = transactionStatuses.every(
-    s => s === "Full Refund Completed"
-  );
-  if (allFullRefund) return "Resolved";
-
-  const anyPartial = transactionStatuses.some(
-    s => s === "Partial Refund Completed"
-  );
-
-  const anyRefunded = transactionStatuses.some(
-    s =>
-      s === "Full Refund Completed" ||
-      s === "Partial Refund Completed"
-  );
-
-  if (anyPartial) return "Partially Resolved";
-  if (anyRefunded) return "Resolved";
-
-  return "In Progress";
 }
