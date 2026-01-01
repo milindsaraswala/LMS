@@ -1,0 +1,42 @@
+import { TransactionStatus } from "../models/IDisputeTransaction";
+import { CaseStatus } from "../models/ICaseStatus";
+
+export function calculateCaseStatus(
+  transactionStatuses: TransactionStatus[],
+  nintexStatus?: "Hold" | "Reject" | null
+): CaseStatus {
+
+  // 1️⃣ Nintex overrides everything
+  if (nintexStatus === "Hold") return "On Hold";
+  if (nintexStatus === "Reject") return "Rejected";
+
+  if (!transactionStatuses || transactionStatuses.length === 0) {
+    return "New";
+  }
+
+  const allNew = transactionStatuses.every(s => s === "New");
+  if (allNew) return "New";
+
+  const allRejected = transactionStatuses.every(s => s === "Rejected");
+  if (allRejected) return "Rejected";
+
+  const allFullRefund = transactionStatuses.every(
+    s => s === "Full Refund Completed"
+  );
+  if (allFullRefund) return "Resolved";
+
+  const anyPartial = transactionStatuses.some(
+    s => s === "Partial Refund Completed"
+  );
+
+  const anyRefunded = transactionStatuses.some(
+    s =>
+      s === "Full Refund Completed" ||
+      s === "Partial Refund Completed"
+  );
+
+  if (anyPartial) return "Partially Resolved";
+  if (anyRefunded) return "Resolved";
+
+  return "In Progress";
+}
