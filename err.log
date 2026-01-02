@@ -1,1 +1,83 @@
+// 🔴 ADD: Card Ops FULL refund
+private confirmFullRefundByCardOps = async (
+  row: IExistingDisputeRow
+): Promise<void> => {
+  const ok = window.confirm(
+    `Confirm FULL refund for card ${row.cardMasked}?`
+  );
+  if (!ok) return;
 
+  await this.processRefund(
+    row,
+    TransactionStatus.FullRefunded,
+    "Full refund approved by Card Operation"
+  );
+};
+
+// 🔴 ADD: Card Ops PARTIAL refund
+private confirmPartialRefundByCardOps = async (
+  row: IExistingDisputeRow
+): Promise<void> => {
+  const ok = window.confirm(
+    `Confirm PARTIAL refund for card ${row.cardMasked}?`
+  );
+  if (!ok) return;
+
+  await this.processRefund(
+    row,
+    TransactionStatus.PartialRefunded,
+    "Partial refund approved by Card Operation"
+  );
+};
+
+
+// 🔴 ADD: Shared refund processor (FULL / PARTIAL)
+private processRefund = async (
+  row: IExistingDisputeRow,
+  newStatus: TransactionStatus,
+  comment: string
+): Promise<void> => {
+  // Optimistic UI
+  this.setState(prev => ({
+    currentCaseRows: prev.currentCaseRows.map(r =>
+      r.id === row.id ? { ...r, refundInProgress: true } : r
+    )
+  }));
+
+  try {
+    // 1️⃣ Update transaction status
+    await this.spSvc.updateTransactionStatus(
+      row.id,
+      newStatus,
+      comment
+    );
+
+    // 2️⃣ Reload transactions
+    const rows = await this.spSvc.getByCaseId(
+      this.state.currentCaseId!
+    );
+
+    // 3️⃣ Recalculate case status
+    const caseStatus =
+      this.caseSvc.calculateCaseStatusFromTransactions(rows);
+
+    // 4️⃣ Update case
+    await this.caseSvc.updateCaseStatus(
+      this.state.caseItemId!,
+      caseStatus,
+      "Transaction refund update"
+    );
+
+    // 5️⃣ Update UI
+    this.setState({
+      currentCaseRows: rows
+    });
+  } catch (e) {
+    alert("Refund processing failed.");
+    this.setState(prev => ({
+      currentCaseRows: prev.currentCaseRows.map(r =>
+        r.id === row.id ? { ...r, refundInProgress: false } : r
+      )
+    }));
+  }
+};
