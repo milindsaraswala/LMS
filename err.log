@@ -1,0 +1,114 @@
+private getCaseBadgeText(): string {
+  const s = this.state.caseStatus;
+
+  if (!s || s === "Draft" || s === "New") return "Draft";
+  if (s === "Submitted") return "Submitted";
+  if (
+    s === "Pending With Card Operation" ||
+    s === "Hold By Card Operation" ||
+    s === "Pending With Outbound"
+  ) return "In Progress";
+
+  return s; // fallback
+}
+
+private getCaseBadgeColor(): string {
+  const text = this.getCaseBadgeText();
+
+  switch (text) {
+    case "Draft": return "#757575";
+    case "Submitted": return "#1976d2";
+    case "In Progress": return "#f57c00";
+    case "Rejected": return "#d32f2f";
+    case "Closed": return "#388e3c";
+    default: return "#455a64";
+  }
+}
+
+{this.state.caseItemId && (
+  <div style={{ marginBottom: 12 }}>
+    <span
+      style={{
+        padding: "4px 10px",
+        borderRadius: 12,
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#fff",
+        background: this.getCaseBadgeColor()
+      }}>
+      {this.getCaseBadgeText()}
+    </span>
+  </div>
+)}
+
+<div style={{ marginTop: 4 }}>
+  <input
+    type="number"
+    placeholder="Amount"
+    min="0"
+    step="0.001"
+    value={(r as any).partialAmount || ""}
+    onChange={(e) => {
+      const val = (e.target as HTMLInputElement).value;
+      this.setState(prev => ({
+        currentCaseRows: prev.currentCaseRows.map(x =>
+          x.id === r.id ? { ...x, partialAmount: val } : x
+        )
+      }));
+    }}
+    style={{
+      width: 80,
+      marginRight: 6,
+      padding: "3px 4px"
+    }}
+  />
+
+  <button
+    disabled={r.refundInProgress || !(r as any).partialAmount}
+    onClick={() =>
+      this.confirmPartialRefundByCardOps(
+        r,
+        Number((r as any).partialAmount)
+      )
+    }>
+    Partial Refund
+  </button>
+</div>
+
+private confirmPartialRefundByCardOps = async (
+  row: IExistingDisputeRow,
+  amount: number
+): Promise<void> => {
+
+  if (!amount || amount <= 0 || amount >= row.txnAmount) {
+    alert("Enter a valid partial refund amount.");
+    return;
+  }
+
+  const ok = window.confirm(
+    `Confirm PARTIAL refund of ${amount} for card ${row.cardMasked}?`
+  );
+  if (!ok) return;
+
+  await this.processRefund(
+    row,
+    TransactionStatus.PartialRefundCompleted,
+    `Partial refund of ${amount} approved by Card Operation`,
+    amount
+  );
+};
+
+private processRefund = async (
+  row: IExistingDisputeRow,
+  newStatus: TransactionStatus,
+  comment: string,
+  partialAmount?: number
+): Promise<void> => {
+
+
+await this.spSvc.updateTransactionStatus(
+  row.id,
+  newStatus,
+  comment,
+  partialAmount // <-- store in list column
+);
