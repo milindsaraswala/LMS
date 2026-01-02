@@ -1,0 +1,33 @@
+<td style={td}>
+  {/* 🔴 AGENT – Fraud only */}
+  {this.state.view === "newCase" &&
+    r.disputeReason === "FRAUD" &&
+    r.cardExId &&
+    !this.state.isCaseLocked && (
+      <button
+        disabled={r.refundInProgress}
+        onClick={() => this.confirmAndRefund(r)}>
+        {r.refundInProgress ? "Processing..." : "Full Refund"}
+      </button>
+    )}
+
+  {/* 🔴 CARD OPERATION – Full & Partial refund */}
+  {this.state.view === "openCase" &&
+    this.isUserCardOps() &&
+    !this.isCaseOverriddenByNintex() && (
+      <>
+        <button
+          style={{ marginRight: 6 }}
+          disabled={r.refundInProgress}
+          onClick={() => this.confirmFullRefundByCardOps(r)}>
+          Full Refund
+        </button>
+
+        <button
+          disabled={r.refundInProgress}
+          onClick={() => this.confirmPartialRefundByCardOps(r)}>
+          Partial Refund
+        </button>
+      </>
+    )}
+</td>
