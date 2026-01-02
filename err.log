@@ -1,1 +1,18 @@
+private mapOutcomeToCaseStatus(outcome: string): string {
+  switch (outcome.toLowerCase()) {
+    case "amend":
+      return "Pending with Outbound";
 
+    case "hold":
+      return "Holding with Card Operation";
+
+    case "reject":
+      return "Rejected";
+
+    case "approve":
+      return "In Progress";
+
+    default:
+      return "In Progress";
+  }
+}
