@@ -1,0 +1,19 @@
+private canAgentDoFullRefund(row: IExistingDisputeRow): boolean {
+  return (
+    row.disputeReason === "FRAUD" &&
+    !!row.cardExId &&
+    !this.state.isCaseLocked &&
+    row.status !== TransactionStatus.RefundInitiated &&
+    row.status !== TransactionStatus.FullRefundCompleted
+  );
+}
+
+private canCardOpsRefund(row: IExistingDisputeRow): boolean {
+  return (
+    row.disputeReason === "FRAUD" &&
+    !!row.cardExId &&
+    this.state.isCaseLocked &&
+    this.isCaseOverriddenByNintex() &&
+    row.status !== TransactionStatus.FullRefundCompleted
+  );
+}
