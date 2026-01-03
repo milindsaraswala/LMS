@@ -1,114 +1,109 @@
-private getCaseBadgeText(): string {
-  const s = this.state.caseStatus;
+private submitToSharePoint = async (): Promise<void> => {
+    const err = this.validateAll();
+    if (err) {
+      this.setState({ message: err });
+      return;
+    }
 
-  if (!s || s === "Draft" || s === "New") return "Draft";
-  if (s === "Submitted") return "Submitted";
-  if (
-    s === "Pending With Card Operation" ||
-    s === "Hold By Card Operation" ||
-    s === "Pending With Outbound"
-  ) return "In Progress";
+    if (!this.state.currentCaseId) {
+      throw new Error("CaseId is missing. Cannot submit case.");
+    }
 
-  return s; // fallback
-}
+    const customer = this.state.customer!;
+    const paciRequestId = this.state.requestId!;
+    const cards = this.state.cards || [];
+    const caseId = this.state.currentCaseId;
 
-private getCaseBadgeColor(): string {
-  const text = this.getCaseBadgeText();
+    const submitted: IExistingDisputeRow[] = [];
 
-  switch (text) {
-    case "Draft": return "#757575";
-    case "Submitted": return "#1976d2";
-    case "In Progress": return "#f57c00";
-    case "Rejected": return "#d32f2f";
-    case "Closed": return "#388e3c";
-    default: return "#455a64";
-  }
-}
+    this.setState({ submitting: true, message: "Submitting to SharePoint..." });
 
-{this.state.caseItemId && (
-  <div style={{ marginBottom: 12 }}>
-    <span
-      style={{
-        padding: "4px 10px",
-        borderRadius: 12,
-        fontSize: 12,
-        fontWeight: 600,
-        color: "#fff",
-        background: this.getCaseBadgeColor()
-      }}>
-      {this.getCaseBadgeText()}
-    </span>
-  </div>
-)}
+    try {
+      let caseItemId = this.state.caseItemId;
 
-<div style={{ marginTop: 4 }}>
-  <input
-    type="number"
-    placeholder="Amount"
-    min="0"
-    step="0.001"
-    value={(r as any).partialAmount || ""}
-    onChange={(e) => {
-      const val = (e.target as HTMLInputElement).value;
-      this.setState(prev => ({
-        currentCaseRows: prev.currentCaseRows.map(x =>
-          x.id === r.id ? { ...x, partialAmount: val } : x
-        )
-      }));
-    }}
-    style={{
-      width: 80,
-      marginRight: 6,
-      padding: "3px 4px"
-    }}
-  />
+      if (!caseItemId) {
+        caseItemId = await this.caseSvc.createCase({
+          caseId: caseId,
+          civilId: customer.civilId,
+          customerName: customer.fullNameEn,
+          mobileNumber: customer.mobile
+        });
 
-  <button
-    disabled={r.refundInProgress || !(r as any).partialAmount}
-    onClick={() =>
-      this.confirmPartialRefundByCardOps(
-        r,
-        Number((r as any).partialAmount)
-      )
-    }>
-    Partial Refund
-  </button>
-</div>
+        const encoded = encodeString(caseItemId.toString());
+        const deepLink = `${this.props.siteUrl}/SitePages/Floward.aspx?c=${encoded}`;
 
-private confirmPartialRefundByCardOps = async (
-  row: IExistingDisputeRow,
-  amount: number
-): Promise<void> => {
+        await this.caseSvc.updateCaseDeepLink(caseItemId, encoded, deepLink);
+        // this.setState({ caseItemId: caseItemId });
+      }
 
-  if (!amount || amount <= 0 || amount >= row.txnAmount) {
-    alert("Enter a valid partial refund amount.");
-    return;
-  }
+      for (let i = 0; i < this.state.transactions.length; i++) {
+        const t = this.state.transactions[i];
 
-  const ok = window.confirm(
-    `Confirm PARTIAL refund of ${amount} for card ${row.cardMasked}?`
-  );
-  if (!ok) return;
+        // get masked card
+        let masked = "",
+          cardExId = "";
+        for (let c = 0; c < cards.length; c++) {
+          if (cards[c].cardNo === t.cardNo) {
+            masked = cards[c].maskedCardNo;
+            cardExId = cards[c].cardExid;
+            break;
+          }
+        }
 
-  await this.processRefund(
-    row,
-    TransactionStatus.PartialRefundCompleted,
-    `Partial refund of ${amount} approved by Card Operation`,
-    amount
-  );
-};
+        const itemId = await this.spSvc.addDisputeItem({
+          civilId: customer.civilId,
+          caseId: caseId,
+          paciRequestId: paciRequestId,
+          cardNo: t.cardNo!,
+          maskedCardNo: masked,
+          cardExId: cardExId,
+          txnDate: t.txnDate!,
+          txnTime: t.txnTime!,
+          txnAmount: Number(t.txnAmount),
+          merchantName: t.merchantName!,
+          disputeReason: t.disputeReason!,
+          comment: t.comment || ""
+        });
 
-private processRefund = async (
-  row: IExistingDisputeRow,
-  newStatus: TransactionStatus,
-  comment: string,
-  partialAmount?: number
-): Promise<void> => {
+        submitted.push({
+          id: itemId,
+          caseId: caseId,
+          civilId: customer.civilId,
+          status: "New",
+          cardMasked: masked,
+          cardExId: cardExId,
+          txnDate: t.txnDate!,
+          txnTime: t.txnTime!,
+          txnAmount: Number(t.txnAmount),
+          merchantName: t.merchantName!,
+          disputeReason: t.disputeReason!,
+          comment: t.comment || "",
+          created: new Date().toISOString()
+        });
 
+        if (t.attachment) {
+          await this.spSvc.addAttachment(itemId, t.attachment);
+        }
+      }
 
-await this.spSvc.updateTransactionStatus(
-  row.id,
-  newStatus,
-  comment,
-  partialAmount // <-- store in list column
-);
+      // refresh existing table
+      // const allRows = await this.spSvc.getExistingByCivilId(customer.civilId);
+      // const currentCaseRows = allRows.filter((r) => r.caseId === this.state.currentCaseId);
+      // const previousRows = allRows.filter((r) => r.caseId !== this.state.currentCaseId);
+
+      this.setState({
+        submitting: false,
+        message: "Transaction(s) added successfully.",
+        transactions: [],
+        currentCaseRows: [...(this.state.currentCaseRows || []), ...submitted],
+        isNewCase: true,
+        status: "approved",
+        caseItemId: caseItemId
+      });
+    } catch (e) {
+      this.setState({
+        submitting: false,
+        message: "Submit failed: " + (e && (e as any).message ? (e as any).message : e ? e.toString() : "")
+      });
+    }
+  };
