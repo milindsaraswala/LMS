@@ -1,1 +1,19 @@
+import { SPHttpClient, SPHttpClientResponse } from "@microsoft/sp-http";
 
+public async deleteCase(caseItemId: number): Promise<void> {
+  const url = `${this.siteUrl}/_api/web/lists/GetByTitle('DisputeCases')/items(${caseItemId})`;
+
+  await this.spHttpClient.post(
+    url,
+    SPHttpClient.configurations.v1,
+    {
+      headers: {
+        "IF-MATCH": "*",
+        "X-HTTP-Method": "DELETE",
+        "Accept": "application/json;odata=nometadata",
+        "Content-Type": "application/json;odata=nometadata",
+        "X-RequestDigest": (document.getElementById("__REQUESTDIGEST") as HTMLInputElement).value
+      }
+    }
+  );
+}
