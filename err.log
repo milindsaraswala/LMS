@@ -1,0 +1,72 @@
+{this.isDraftCase() && this.state.caseItemId && (
+  <div style={{ marginTop: 16 }}>
+    <button
+      style={{
+        padding: "8px 14px",
+        background: "#d32f2f",
+        color: "#fff",
+        border: "none",
+        borderRadius: 3
+      }}
+      onClick={this.deleteDraftCase}>
+      Delete Draft Case
+    </button>
+  </div>
+)}
+
+private deleteDraftCase = async (): Promise<void> => {
+  if (!this.isDraftCase()) {
+    alert("Only draft cases can be deleted.");
+    return;
+  }
+
+  const ok = window.confirm(
+    "This will permanently delete the draft case and all its transactions.\n\nDo you want to continue?"
+  );
+
+  if (!ok) return;
+
+  try {
+    const caseId = this.state.currentCaseId!;
+    const caseItemId = this.state.caseItemId!;
+
+    // 1️⃣ Delete all transactions under this case
+    const rows = await this.spSvc.getByCaseId(caseId);
+    for (const r of rows) {
+      await this.spSvc.deleteDisputeItem(r.id);
+    }
+
+    // 2️⃣ Delete case item itself
+    await this.caseSvc.deleteCase(caseItemId);
+
+    // 3️⃣ Reset UI completely
+    this.setState({
+      view: "dashboard",
+      customer: undefined,
+      cards: undefined,
+      transactions: [],
+      currentCaseRows: [],
+      previousCaseRows: [],
+      caseItemId: undefined,
+      currentCaseId: undefined,
+      caseStatus: undefined,
+      isCaseLocked: false,
+      isNewCase: false,
+      status: "idle",
+      message: "Draft case deleted successfully."
+    });
+  } catch (e) {
+    alert("Failed to delete draft case.");
+  }
+};
+
+public async deleteCase(caseItemId: number): Promise<void> {
+  const url = `${this.siteUrl}/_api/web/lists/GetByTitle('DisputeCases')/items(${caseItemId})`;
+  await this.spHttpClient.post(url, {
+    headers: {
+      "IF-MATCH": "*",
+      "X-HTTP-Method": "DELETE"
+    }
+  });
+}
+
