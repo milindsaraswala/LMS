@@ -1,0 +1,5 @@
+  private isCaseOverriddenByNintex(): boolean {
+    const status = this.state.caseStatus;
+
+    return status === "Pending With Card Operation" || status === "Hold By Card Operation" || status === "Pending With Outbound" || status === "Rejected By Card Operation";
+  }
