@@ -1,0 +1,9 @@
+private hasFraudTransaction(): boolean {
+  const rows = this.state.currentCaseRows || [];
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].disputeReason === "FRAUD") {
+      return true;
+    }
+  }
+  return false;
+}
