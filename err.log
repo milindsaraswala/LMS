@@ -1,17 +1,1 @@
-private callPayURefundApi = async (
-  cardExid: string,
-  refundAmount: number
-): Promise<void> => {
-  const userId = getCleanUserId(
-    this.props.context.pageContext.user.loginName
-  );
 
-  await apiPost(
-    `${this.props.apiBaseUrl.replace(/\/$/, "")}/api/floward/refund`,
-    {
-      cardExid,
-      userId,
-      refundAmount
-    }
-  );
-};
