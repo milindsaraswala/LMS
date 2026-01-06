@@ -173,7 +173,8 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
       caseStatus: caseInfo.status || "Pending With Card Operation",
       customer: {
         civilId: caseInfo.civilId,
-        fullNameEn: caseInfo.customerName
+        fullNameEn: caseInfo.customerName,
+        mobile: caseInfo.mobileNumber
       } as any,
       previousCaseRows: [],
       currentCaseRows: rows,
@@ -215,24 +216,32 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
         {customer && (
           <div style={{ marginTop: 12, border: "1px solid #ddd", padding: 12, borderRadius: 4 }}>
             <div style={{ marginBottom: 8 }}>
-              <b>Customer:</b> {customer.fullNameEn} / {customer.fullNameAr}
+              <b>Customer:</b> {customer.fullNameEn}
             </div>
             <div style={{ marginBottom: 8 }}>
               <b>Civil ID</b> {customer.civilId}
             </div>
-
-            <div style={{ marginTop: 10 }}>
-              <label>
-                <input type="checkbox" checked={this.state.mockPaci} onChange={(e) => this.setState({ mockPaci: (e.target as HTMLInputElement).checked })} /> Mock PACI Approval
-                (testing)
-              </label>
+            <div>
+              <b>Mobile : </b> {customer.mobile}
             </div>
-            <button
-              onClick={() => this.startPaciAuth()}
-              disabled={status === "starting" || status === "waiting" || (previousCaseRows.length > 0 && !this.state.isNewCase)}
-              style={{ padding: "8px 14px" }}>
-              Authenticate with PACI
-            </button>
+
+            {!this.isWorkflowstarted() && (
+              <div>
+                <div style={{ marginTop: 10 }}>
+                  <label>
+                    <input type="checkbox" checked={this.state.mockPaci} onChange={(e) => this.setState({ mockPaci: (e.target as HTMLInputElement).checked })} /> Mock PACI Approval
+                    (testing)
+                  </label>
+                </div>
+
+                <button
+                  onClick={() => this.startPaciAuth()}
+                  disabled={status === "starting" || status === "waiting" || (previousCaseRows.length > 0 && !this.state.isNewCase)}
+                  style={{ padding: "8px 14px" }}>
+                  Authenticate with PACI
+                </button>
+              </div>
+            )}
 
             {status === "waiting" && (
               <div style={{ marginTop: 10 }}>
@@ -263,7 +272,10 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
             )}
             {previousCaseRows.length > 0 && (
               <div style={{ marginTop: 14 }}>
-                <h4 style={{ margin: "10px 0" }}>Previous Transactions</h4>
+                <h4 style={{ margin: "10px 0", color: "#6b7280" }}>
+                  Previous Transactions
+                  <span style={{ fontSize: 12, color: "#6b7280" }}> 🔒 Read-Only </span>
+                </h4>
                 {loadingExisting ? <div>Loading previous transactions...</div> : this.renderExistingTable(previousCaseRows, false)}
                 <div style={{ marginTop: 10, color: "#b00020", fontWeight: 600 }}>This customer has previous case(s). You may proceed to create new case.</div>
               </div>
@@ -285,7 +297,7 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
 
             {this.state.currentCaseRows && this.state.currentCaseRows.length > 0 && (
               <div style={{ marginTop: 16 }}>
-                <h4>Current Case (Just Created)</h4>
+                <h4 style={{ margin: "10px 0", color: "#1d4ed8" }}>Current Case</h4>
 
                 {this.renderExistingTable(this.state.currentCaseRows, true)}
               </div>
@@ -333,6 +345,8 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
                       transactions: [],
                       currentCaseRows: [],
                       requestId: undefined,
+                      caseStatus: undefined,
+                      isCaseLocked: false,
                       status: "idle",
                       message: "New Case started. Please authenticate customer."
                     })
@@ -444,108 +458,122 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
       return <div>No previous transactions found.</div>;
     }
 
+    const tableWrapperStyle: React.CSSProperties = {
+      background: isCurrentCase ? "#ffffff" : "#f9fafb",
+      border: isCurrentCase ? "1px solid #d0d7de" : "1px dashed #c7c7c7",
+      padding: 8,
+      borderRadius: 4
+    };
+
     return (
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-        <thead>
-          <tr>
-            <th style={th}>ID</th>
-            <th style={th}>Status</th>
-            <th style={th}>Card</th>
-            <th style={th}>Date</th>
-            <th style={th}>Time</th>
-            <th style={th}>Amount</th>
-            <th style={th}>Merchant</th>
-            <th style={th}>Reason</th>
-            <th style={th}>Comment</th>
-            <th style={th}>Created</th>
-            <th style={th}>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td style={td}>{r.id}</td>
-              <td style={td}>{r.status || ""}</td>
-              <td style={td}>{r.cardMasked || ""}</td>
-              <td style={td}>{this.formatDate(r.txnDate) || ""}</td>
-              <td style={td}>{this.formatTime(r.txnTime) || ""}</td>
-              <td style={td}>{r.txnAmount !== undefined ? r.txnAmount : ""}</td>
-              <td style={td}>{r.merchantName || ""}</td>
-              <td style={td}>{this.getDisputeReasonText(r.disputeReason) || ""}</td>
-              <td style={td}>
-                {r.comment ? (
-                  <a
-                    style={{ color: "#0078d4", cursor: "pointer" }}
-                    onClick={() => {
-                      this.setState({
-                        showCommentModal: true,
-                        selectedComment: r.comment
-                      });
-                    }}>
-                    View comment
-                  </a>
-                ) : (
-                  <span style={{ color: "#999" }}> - </span>
-                )}
-              </td>
-              <td style={td}>{this.formatDate(r.created) || ""}</td>
-              <td style={td}>
-                {isCurrentCase && this.canDeleteTransaction() && (
-                  <button style={{ marginRight: 6 }} onClick={() => this.removeSavedTransaction(r)}>
-                    Delete
-                  </button>
-                )}
+      <div style={tableWrapperStyle}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={th}>ID</th>
+              <th style={th}>Status</th>
+              <th style={th}>Card</th>
+              <th style={th}>Date</th>
+              <th style={th}>Time</th>
+              <th style={th}>Amount</th>
+              <th style={th}>Merchant</th>
+              <th style={th}>Reason</th>
+              <th style={th}>Comment</th>
+              <th style={th}>Created</th>
+              <th style={th}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.id}
+                style={{
+                  backgroundColor: isCurrentCase ? "#ffffff" : "#fcfcfc",
+                  color: isCurrentCase ? "#000" : "#555"
+                }}>
+                <td style={td}>{r.id}</td>
+                <td style={td}>{r.status || ""}</td>
+                <td style={td}>{r.cardMasked || ""}</td>
+                <td style={td}>{this.formatDate(r.txnDate) || ""}</td>
+                <td style={td}>{this.formatTime(r.txnTime) || ""}</td>
+                <td style={td}>{r.txnAmount !== undefined ? r.txnAmount : ""}</td>
+                <td style={td}>{r.merchantName || ""}</td>
+                <td style={td}>{this.getDisputeReasonText(r.disputeReason) || ""}</td>
+                <td style={td}>
+                  {r.comment ? (
+                    <a
+                      style={{ color: "#0078d4", cursor: "pointer" }}
+                      onClick={() => {
+                        this.setState({
+                          showCommentModal: true,
+                          selectedComment: r.comment
+                        });
+                      }}>
+                      View comment
+                    </a>
+                  ) : (
+                    <span style={{ color: "#999" }}> - </span>
+                  )}
+                </td>
+                <td style={td}>{this.formatDate(r.created) || ""}</td>
+                <td style={td}>
+                  {isCurrentCase && this.canDeleteTransaction() && (
+                    <button style={{ marginRight: 6 }} onClick={() => this.removeSavedTransaction(r)}>
+                      Delete
+                    </button>
+                  )}
 
-                {this.canAgentDoFullRefund(r) ? (
-                  <button
-                    disabled={r.refundInProgress}
-                    style={{
-                      padding: "4px 8px",
-                      opacity: r.refundInProgress || r.status === "Refund Initiated" ? 0.6 : 1
-                    }}
-                    onClick={() => this.confirmAndRefund(r)}>
-                    {r.refundInProgress ? "Processing..." : "Full Refund"}
-                  </button>
-                ) : (
-                  this.canCardOpsRefund(r) && (
-                    <div>
-                      <input
-                        type="number"
-                        min="0.001"
-                        step="0.001"
-                        max={r.txnAmount}
-                        placeholder="Refund Amount"
-                        value={(r as any).refundAmount || ""}
-                        onChange={(e) => {
-                          const val = (e.target as HTMLInputElement).value;
-                          this.setState((prev) => ({
-                            currentCaseRows: prev.currentCaseRows.map((x) => (x.id === r.id ? { ...x, refundAmount: val } : x))
-                          }));
-                        }}
-                        style={{
-                          width: 90,
-                          marginRight: 6
-                        }}
-                      />
-                      <button
-                        disabled={r.refundInProgress || !(r as any).refundAmount || Number((r as any).refundAmount) <= 0 || Number((r as any).refundAmount) > r.txnAmount}
-                        onClick={() => this.sendPayULinkForRow(r, Number((r as any).refundAmount))}>
-                        Send PayU Link
-                      </button>
+                  {this.canAgentDoFullRefund(r) ? (
+                    <button
+                      disabled={r.refundInProgress}
+                      style={{
+                        padding: "4px 8px",
+                        opacity: r.refundInProgress || r.status === "Refund Initiated" ? 0.6 : 1
+                      }}
+                      onClick={() => this.confirmAndRefund(r)}>
+                      {r.refundInProgress ? "Processing..." : "Full Refund"}
+                    </button>
+                  ) : (
+                    this.canCardOpsRefund(r) && (
+                      <div>
+                        <input
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          max={r.txnAmount}
+                          placeholder="Refund Amount"
+                          value={(r as any).refundAmount || ""}
+                          onChange={(e) => {
+                            const val = (e.target as HTMLInputElement).value;
+                            this.setState((prev) => ({
+                              currentCaseRows: prev.currentCaseRows.map((x) => (x.id === r.id ? { ...x, refundAmount: val } : x))
+                            }));
+                          }}
+                          style={{
+                            width: 90,
+                            marginRight: 6
+                          }}
+                        />
+                        <button
+                          disabled={r.refundInProgress || !(r as any).refundAmount || Number((r as any).refundAmount) <= 0 || Number((r as any).refundAmount) > r.txnAmount}
+                          onClick={() => this.sendPayULinkForRow(r, Number((r as any).refundAmount))}>
+                          Send PayU Link
+                        </button>
 
-                      {/* <div style={{ marginTop: 4 }}>
+                        {/* <div style={{ marginTop: 4 }}>
                         <button disabled={r.refundInProgress || !(r as any).partialAmount} onClick={() => this.confirmPartialRefundByCardOps(r, Number((r as any).partialAmount))}>
                           Partial Refund
                         </button>
                       </div> */}
-                    </div>
-                  )
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                      </div>
+                    )
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
 
@@ -894,8 +922,6 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
   };
 
   private validateOneTransaction(t: IDisputeTransaction): string | null {
-    const now = new Date();
-
     if (!t.cardNo) {
       return "Card is required.";
     }
@@ -906,6 +932,7 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
       return "Transaction time is required.";
     }
 
+    const now = new Date();
     const [year, month, day] = t.txnDate.split("-").map(Number);
     const [hours, minutes] = t.txnTime.split(":").map(Number);
 
