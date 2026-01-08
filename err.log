@@ -1,0 +1,25 @@
+const calculateAveragePerformance = (
+  start: any,
+  performances: any[]
+): number => {
+
+  if (start === null || start === "" || isNaN(start)) {
+    return 0;
+  }
+
+  const startQ = Number(start); // 1–4
+
+  let total = 0;
+  let count = 0;
+
+  for (let i = startQ - 1; i < performances.length; i++) {
+    const val = Number(performances[i]);
+
+    if (!isNaN(val)) {
+      total += val;
+      count++;
+    }
+  }
+
+  return count > 0 ? +(total / count).toFixed(2) : 0;
+};
