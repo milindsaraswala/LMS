@@ -1,0 +1,67 @@
+gridPerformanceBracket = $("#gridPerformanceBracket")
+  .dxDataGrid({
+    dataSource: await getPerformanceBracketDataSource(
+      selectedContract,
+      selectedContractYear,
+      contractStageStatus.Employee.DirectManagerEmail
+    ),
+
+    editing: {
+      mode: "cell",
+      allowUpdating: true
+    },
+
+    columns: [
+      { dataField: "Level", caption: "Employee Organization Level" },
+      { dataField: "EnterpriseScore", caption: "Enterprise Contribution %" },
+      { dataField: "DirectManagerScore", caption: "Direct Manager Contribution %" },
+      { dataField: "IndividualScore", caption: "Individual Contribution %" },
+      { dataField: "EndYearResult", caption: "Final End Year Result" },
+      {
+        dataField: "PerformanceBracket",
+        caption: `${contractStageStatus.Year.Title} Overall Performance Score`
+      }
+    ],
+
+    // ✅ THIS IS THE KEY PART
+    onEditorPreparing: function (e) {
+      if (e.parentType === "dataRow" && e.dataField === "EndYearResult") {
+        // Allow editing ONLY for Final Score row
+        if (!e.row || !e.row.data || e.row.data.IsFinalScore !== true) {
+          e.cancel = true;
+        }
+      }
+    },
+
+    onCellValueChanged: async function (e) {
+      if (
+        e.column.dataField === "EndYearResult" &&
+        e.data &&
+        e.data.IsFinalScore === true
+      ) {
+        var newValue = Number(e.value);
+
+        if (isNaN(newValue)) {
+          return;
+        }
+
+        // Update Performance Bracket in UI
+        e.data.PerformanceBracket = getPerformanceBracket(newValue);
+        e.component.refresh();
+
+        // Save to Contract list
+        await sp.web.lists
+          .getByTitle("Contract")
+          .items.getById(selectedContract)
+          .update({
+            EndYearResult: newValue
+          });
+      }
+    },
+
+    columnAutoWidth: true,
+    showBorders: true,
+    showRowLines: true,
+    rowAlternationEnabled: true
+  })
+  .dxDataGrid("instance");
