@@ -1,0 +1,141 @@
+
+export const getPerformanceBracketDataSource = async (
+  selectedContract: number,
+  yearId: number,
+  directManagerEmail: string,
+  kpiThreshold: number = 80
+): Promise<ScoreRow[]> => {
+  const response: ScoreRow[] = [];
+
+  const contractArr = await sp.web.lists
+    .getByTitle("Contract")
+    .items.select(
+      "Employee/Leveling",
+      "EndYearResult",
+      "IndividualOverallScore"
+    ) // "EnterpriseScoreinPercentage", "DirectManagerScoreinPercentage", "IndividualScoreinPercentage"
+    .expand("Employee")
+    .filter(`Id eq ${selectedContract}`)
+    .top(1)();
+
+  const contract = contractArr[0];
+  if (!contract || !contract.Employee.Leveling) {
+    return response;
+  }
+
+  const employeeLevel = String(contract.Employee.Leveling).trim();
+  const individualEndYearResult = n(contract.EndYearResult);
+  const individualEndYearResultThreshold = n(contract.IndividualOverallScore);
+
+  const [enterpriseArr, directManagerArr, bracketArr] = await Promise.all([
+    sp.web.lists
+      .getByTitle("Contract")
+      .items.select(
+        "EndYearResult",
+        "IndividualOverallScore",
+        "Employee/EmployeeId"
+      )
+      .expand("Employee")
+      .filter(`YearId eq ${yearId} and Employee/EmployeeId eq 800`)
+      .top(1)(),
+
+    sp.web.lists
+      .getByTitle("Contract")
+      .items.select("EndYearResult", "IndividualOverallScore", "Employee/Email")
+      .expand("Employee")
+      .filter(
+        `YearId eq ${yearId} and Employee/Email eq '${odata(
+          directManagerEmail
+        )}'`
+      )
+      .top(1)(),
+
+    await sp.web.lists
+      .getByTitle("PerformanceBracket")
+      .items.select(
+        "Title",
+        "EnterpriseScore",
+        "DirectManagerScore",
+        "IndividualScore"
+      )
+      .filter(`Title eq '${odata(employeeLevel)}'`)
+      .get(),
+  ]);
+
+  const enterprise = enterpriseArr[0];
+  const directMgr = directManagerArr[0];
+  const bracket = bracketArr[0];
+
+  if (!bracket) {
+    return response;
+  }
+
+  // const enterpriseEndYearResult = n(enterprise.EndYearResult);
+  const enterpriseEndYearResultThreshold = n(enterprise.IndividualOverallScore);
+
+  // const directManagerEndYearResult = n(directMgr.EndYearResult);
+  const directManagerEndYearResultThreshold = n(
+    directMgr.IndividualOverallScore
+  );
+
+  const brEntPct = n(bracket.EnterpriseScore);
+  const brMgrPct = n(bracket.DirectManagerScore);
+  const brIndPct = n(bracket.IndividualScore);
+
+  // Row 1: show weights
+  response.push({
+    Level: bracket.Title,
+    EnterpriseScore: brEntPct === 0 ? "N/A" : brEntPct,
+    DirectManagerScore: brMgrPct === 0 ? "N/A" : brMgrPct,
+    IndividualScore: brIndPct,
+    EndYearResult: individualEndYearResult || "",
+    PerformanceBracket: "",
+  });
+
+  // Helper to build calc row
+  const buildCalcRow = (
+    label: string,
+    entBase: number,
+    mgrBase: number,
+    indBase: number
+  ): ScoreRow => {
+    const ent = calcPart(brEntPct, entBase);
+    const mgr = calcPart(brMgrPct, mgrBase);
+    const ind = round2((brIndPct * indBase) / 100);
+
+    const total = round2(
+      (ent !== null ? ent : 0) + (mgr !== null ? mgr : 0) + ind
+    );
+
+    return {
+      Level: label,
+      EnterpriseScore: ent === null ? "N/A" : ent,
+      DirectManagerScore: mgr === null ? "N/A" : mgr,
+      IndividualScore: ind,
+      EndYearResult: total,
+      PerformanceBracket: getPerformanceBracket(total),
+    };
+  };
+
+  // // Row 2 : without threshold
+  // response.push(
+  // 	buildCalcRow(
+  // 		`Score Calculation (Without ${kpiThreshold}% Threshold)`,
+  // 		enterpriseEndYearResult,
+  // 		directManagerEndYearResult,
+  // 		individualEndYearResult
+  // 	)
+  // );
+
+  // Row 3 : with threshold (IndividualOverallScore as threshold base)
+  response.push(
+    buildCalcRow(
+      // `Score Calculation (With ${kpiThreshold}% Threshold)`,
+      "Score Calculation",
+      enterpriseEndYearResultThreshold,
+      directManagerEndYearResultThreshold,
+      individualEndYearResultThreshold
+    )
+  );
+  return response;
+};
