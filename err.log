@@ -1,1 +1,55 @@
+public DataTable GetDataTableFromJsonString(string json,string propertyName)
+		{
+			var jsonObject = JObject.Parse(json);
 
+			var jsonArray = JArray.Parse(jsonObject.GetValue(propertyName).ToString());
+			var dataTable = new DataTable();
+
+			foreach (JObject obj in jsonArray)
+			{
+				foreach (var property in obj.Properties())
+				{
+					if (property.Value.Type == JTokenType.Object)
+					{
+						foreach (var subProperty in ((JObject)property.Value).Properties())
+						{
+							string columnName = $"{property.Name}_{subProperty.Name}";
+							if (!dataTable.Columns.Contains(columnName))
+							{
+								dataTable.Columns.Add(columnName, typeof(string));
+							}
+						}
+					}
+					else
+					{
+						if (!dataTable.Columns.Contains(property.Name))
+						{
+							dataTable.Columns.Add(property.Name, typeof(string));
+						}
+					}
+				}
+			}
+
+			foreach (JObject obj in jsonArray)
+			{
+				DataRow row = dataTable.NewRow();
+				foreach (var property in obj.Properties())
+				{
+					if (property.Value.Type == JTokenType.Object)
+					{
+						foreach (var subProperty in ((JObject)property.Value).Properties())
+						{
+							string columnName = $"{property.Name}_{subProperty.Name}";
+							row[columnName] = subProperty.Value.ToString();
+						}
+					}
+					else
+					{
+						row[property.Name] = property.Value.ToString();
+					}
+				}
+				dataTable.Rows.Add(row);
+			}
+
+			return dataTable;
+		}
