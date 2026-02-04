@@ -1,0 +1,198 @@
+using Newtonsoft.Json;
+
+namespace webApi.Models.PACI
+{
+	public class PaciInitiateAuthRequestDto
+	{
+		public string CivilNo { get; set; }
+		public string AssuranceLevel { get; set; }
+		public string ServiceDescriptionEN { get; set; }
+		public string ServiceDescriptionAR { get; set; }
+		public string AdditionalData { get; set; }
+		public string Challenge { get; set; }
+		public string AuthenticationReasonAr { get; set; }
+		public string AuthenticationReasonEn { get; set; }
+		public string RequestUserDetails { get; set; }
+	}
+
+	public class PaciInitiateAuthResponseDto
+	{
+		public string RequestId { get; set; }
+		public string QRCodeImageBase64 { get; set; }
+	}
+
+	public class PaciCallbackRootDto
+	{
+		[JsonProperty("MIDAuthSignResponse")]
+		public MIDAuthSignResponseDto MIDAuthSignResponse { get; set; }
+	}
+
+	public class MIDAuthSignResponseDto
+	{
+		[JsonProperty("RequestDetails")]
+		public RequestDetailsDto RequestDetails { get; set; }
+
+		[JsonProperty("ResultDetails")]
+		public ResultDetailsDto ResultDetails { get; set; }
+
+		[JsonProperty("PersonalData")]
+		public PaciPersonalDataDto PersonalData { get; set; }
+
+		[JsonProperty("Signature")]
+		public PaciSignatureDto Signature { get; set; }
+	}
+	public class RequestDetailsDto
+	{
+		[JsonProperty("RequestID")]
+		public string RequestId { get; set; }
+
+		[JsonProperty("RequestType")]
+		public string RequestType { get; set; }
+
+		[JsonProperty("ServiceProviderId")]
+		public string ServiceProviderId { get; set; }
+
+		[JsonProperty("CivilNo")]
+		public string CivilNo { get; set; }
+	}
+	public class ResultDetailsDto
+	{
+		[JsonProperty("ResultCode")]
+		public string ResultCode { get; set; }
+
+		[JsonProperty("UserAction")]
+		public string UserAction { get; set; }
+
+		[JsonProperty("UserCivilNo")]
+		public string UserCivilNo { get; set; }
+
+		[JsonProperty("UserCertificate")]
+		public string UserCertificate { get; set; }
+
+		[JsonProperty("SignatureData")]
+		public string SignatureData { get; set; }
+
+		[JsonProperty("HashAlgorithm")]
+		public string HashAlgorithm { get; set; }
+
+		[JsonProperty("SigningDatatype")]
+		public string SigningDatatype { get; set; }
+
+		[JsonProperty("TransactionDate")]
+		public string TransactionDate { get; set; }
+
+		[JsonIgnore]
+		public int? ResultCodeInt
+		{
+			get
+			{
+				if (int.TryParse(ResultCode, out var v))
+					return v;
+				return null;
+			}
+		}
+
+		[JsonIgnore]
+		public int? UserActionInt
+		{
+			get
+			{
+				if (int.TryParse(UserAction, out var v))
+					return v;
+				return null;
+			}
+		}
+	}
+	public class PaciPersonalDataDto
+	{
+		[JsonProperty("CivilID")]
+		public string CivilId { get; set; }
+
+		[JsonProperty("FullNameAr")]
+		public string FullNameAr { get; set; }
+
+		[JsonProperty("FullNameEn")]
+		public string FullNameEn { get; set; }
+
+		[JsonProperty("NationalityEn")]
+		public string NationalityEn { get; set; }
+
+		[JsonProperty("NationalityAr")]
+		public string NationalityAr { get; set; }
+
+		[JsonProperty("BirthDate")]
+		public string BirthDate { get; set; }
+
+		[JsonProperty("Gender")]
+		public string Gender { get; set; }
+
+		[JsonProperty("BloodGroup")]
+		public string BloodGroup { get; set; }
+
+		[JsonProperty("Photo")]
+		public string Photo { get; set; }
+
+		[JsonProperty("CardExpiryDate")]
+		public string CardExpiryDate { get; set; }
+
+		[JsonProperty("CardSerial")]
+		public string CardSerial { get; set; }
+
+		[JsonProperty("DocumentNumber")]
+		public string DocumentNumber { get; set; }
+
+		[JsonProperty("PassportNumber")]
+		public string PassportNumber { get; set; }
+
+		[JsonProperty("GovData")]
+		public PaciGovDataDto GovData { get; set; }
+
+		[JsonProperty("Address")]
+		public PaciAddressDto Address { get; set; }
+	}
+	public class PaciGovDataDto
+	{
+		[JsonProperty("CivilIdExpiryDate")]
+		public string CivilIdExpiryDate { get; set; }
+
+		[JsonProperty("SponsorName")]
+		public string SponsorName { get; set; }
+	}
+	public class PaciAddressDto
+	{
+		[JsonProperty("Governerate")]
+		public string Governerate { get; set; }
+
+		[JsonProperty("Area")]
+		public string Area { get; set; }
+
+		[JsonProperty("PaciBuildingNumber")]
+		public string PaciBuildingNumber { get; set; }
+
+		[JsonProperty("FloorNumber")]
+		public string FloorNumber { get; set; }
+
+		[JsonProperty("BuildingNumber")]
+		public string BuildingNumber { get; set; }
+
+		[JsonProperty("BlockNumber")]
+		public string BlockNumber { get; set; }
+
+		[JsonProperty("UnitNumber")]
+		public string UnitNumber { get; set; }
+
+		[JsonProperty("StreetName")]
+		public string StreetName { get; set; }
+
+		[JsonProperty("UnitType")]
+		public string UnitType { get; set; }
+	}
+	public class PaciSignatureDto
+	{
+		[JsonProperty("SignatureData")]
+		public string SignatureData { get; set; }
+
+		[JsonProperty("SigningCertificate")]
+		public string SigningCertificate { get; set; }
+	}
+}
