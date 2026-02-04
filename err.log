@@ -1,0 +1,234 @@
+using Microsoft.SharePoint;
+using System;
+using System.Configuration;
+using webApi.Models.Floward;
+using webApi.Models.PACI;
+
+namespace webApi.Services.Floward
+{
+	public interface IPaciAuthCallbackLogger
+	{
+		int LogReceived(MIDAuthSignResponseDto data, string rawJson);
+		void UpdateProcessingResult(int itemId, bool success,int? resultCode, string errorMessage = null);
+	}
+	public class PaciAuthCallbackLogger : IPaciAuthCallbackLogger
+	{
+		private readonly string _siteUrl;
+		private readonly string _listName = "PaciAuthCallbackLog";
+
+		public PaciAuthCallbackLogger()
+		{
+			_siteUrl = ConfigurationManager.AppSettings["PaciAuthCallbackLogSiteUrl"];
+			_listName = ConfigurationManager.AppSettings["PaciAuthCallbackLogListName"];
+
+			if (string.IsNullOrEmpty(_siteUrl))
+				throw new ConfigurationErrorsException("Missing appSettings: PaciAuthCallbackLogSiteUrl");
+		}
+
+		public int LogReceived(MIDAuthSignResponseDto data, string rawJson)
+		{
+			if (data?.RequestDetails == null)
+				throw new ArgumentException("Invalid PACI callback data");
+
+			int itemId = 0;
+
+			SPSecurity.RunWithElevatedPrivileges(() =>
+			{
+				using (var site = new SPSite(_siteUrl))
+				using (var web = site.OpenWeb())
+				{
+					web.AllowUnsafeUpdates = true;
+
+					var list = web.Lists[_listName];
+					var item = list.Items.Add();
+
+					var req = data.RequestDetails;
+					var res = data.ResultDetails;
+
+					item["Title"] = Safe(req.RequestId);
+					item["RequestId"] = Safe(req.RequestId);
+					item["RequestType"] = Safe(req.RequestType);
+					item["ServiceProviderId"] = Safe(req.ServiceProviderId);
+					item["CivilNo"] = Safe(req.CivilNo);
+
+					if (res != null)
+					{
+						int? resultCode = res.ResultCodeInt;
+
+						item["ResultCode"] = resultCode;
+						item["ResultDescription"] = DescribeCode(resultCode);
+						item["UserAction"] = res.UserAction;
+						item["UserCivilNo"] = Safe(res.UserCivilNo);
+					}
+
+					item["RawJson"] = rawJson;
+					item["IsProcessed"] = false;
+					item["ProcessedOn"] = null;
+					item["ErrorMessage"] = null;
+
+					item.Update();
+
+					itemId = item.ID;
+					web.AllowUnsafeUpdates = false;
+				}
+			});
+
+			return itemId;
+		}
+
+		public void UpdateProcessingResult(int itemId, bool success,int? resultCode, string errorMessage = null)
+		{
+			if (itemId <= 0)
+				return;
+
+			SPSecurity.RunWithElevatedPrivileges(() =>
+			{
+				using (var site = new SPSite(_siteUrl))
+				using (var web = site.OpenWeb())
+				{
+					web.AllowUnsafeUpdates = true;
+
+					var list = web.Lists[_listName];
+					var item = list.GetItemById(itemId);
+
+					item["IsProcessed"] = success;
+					item["ProcessedOn"] = DateTime.Now;
+					item["ResultCode"] = resultCode.Value;
+					item["ResultDescription"] = DescribeCode(resultCode);
+					item["ErrorMessage"] = success ? null : (errorMessage ?? "Unknown error");
+
+					item.Update();
+					web.AllowUnsafeUpdates = false;
+				}
+			});
+		}
+
+		public string DescribeCode(int? code)
+		{
+			var describe = "";
+			switch (code)
+			{
+				case 10:
+					describe = "Authenticated";
+					break;
+				case 20:
+					describe = "User certificate is revoked";
+					break;
+				case 30:
+					describe = "Failed to verify";
+					break;
+				case 40:
+					describe = "Declined";
+					break;
+				case 50:
+					describe = "Certificate Expired";
+					break;
+				default:
+					describe = null;
+					break;
+			}
+			return describe;
+		}
+		private static string Safe(string s) => string.IsNullOrEmpty(s) ? string.Empty : s;
+	}
+}
+
+
+==================================================== Controller ==========================================
+using Newtonsoft.Json;
+using System;
+using System.Threading.Tasks;
+using System.Web.Http;
+using webApi.Models.PACI;
+using webApi.Services.Floward;
+
+namespace webApi.Controllers
+{
+	[RoutePrefix("api/paci")]
+	public class PaciCallbackController : ApiController
+	{
+		private readonly IPaciAuthCallbackLogger _logger;
+
+		public PaciCallbackController()
+		{
+			_logger = new PaciAuthCallbackLogger();
+		}
+
+		[HttpPost]
+		[Route("callback/auth")]
+		public async Task<IHttpActionResult> CallbackAuth()
+		{
+			string rawJson = null;
+			int logItemId = 0;
+			try
+			{
+				rawJson = await Request.Content.ReadAsStringAsync();
+
+				MIDAuthSignResponseDto data = null;
+				try
+				{
+					var root = JsonConvert.DeserializeObject<PaciCallbackRootDto>(rawJson);
+					data = root?.MIDAuthSignResponse;
+				}
+				catch
+				{		}
+
+				if(data == null)
+				{
+					try
+					{
+						data = JsonConvert.DeserializeObject<MIDAuthSignResponseDto>(rawJson);
+					}
+					catch
+					{
+						_logger.LogReceived(null, rawJson);
+						return Ok();
+					}
+				}
+				logItemId = _logger.LogReceived(data, rawJson);
+
+				if (data?.RequestDetails == null ||
+					string.IsNullOrWhiteSpace(data.RequestDetails.RequestId))
+				{
+					_logger.UpdateProcessingResult(
+						logItemId,
+						false,
+						null,
+						"Missing RequestDetails or RequestID"
+					);
+
+					return Ok();
+				}
+
+				int? resultCode = data.ResultDetails?.ResultCodeInt;
+				var userAction = data.ResultDetails?.UserAction;
+
+				_logger.UpdateProcessingResult(logItemId, true, resultCode);
+			}
+			catch (Exception ex)
+			{
+				try
+				{
+					if (logItemId > 0)
+					{
+						_logger.UpdateProcessingResult(
+							logItemId,
+							false,
+							null,
+							ex.Message
+						);
+					}
+					else
+					{
+						_logger.LogReceived(null, rawJson);
+					}
+				}
+				catch
+				{ }
+				return Ok();
+			}
+
+			return Ok();
+		}
+	}
+}
