@@ -1,0 +1,47 @@
+using Newtonsoft.Json;
+using System;
+
+namespace webApi.Models.Floward
+{
+	public class PaciStatusResponseDto
+	{
+		[JsonProperty("RequestID")]
+		public string RequestId { get; set; }
+
+		[JsonProperty("CivilNo")]
+		public string CivilNo { get; set; }
+
+		[JsonProperty("ResultCode")]
+		public string ResultCodeRaw { get; set; }
+
+		[JsonIgnore]
+		public int? ResultCode
+		{
+			get
+			{
+				if (int.TryParse(ResultCodeRaw, out var code))
+					return code;
+				return null;
+			}
+		}
+		public string ResultDescription { get; set; }
+		public DateTime? ReceivedOn { get; set; }
+		public string Status { get; set; }
+		public bool IsProcessed { get; set; }
+
+		[JsonProperty("UserAction")]
+		public string UserActionRaw { get; set; }
+
+		[JsonIgnore]
+		public int? UserAction
+		{
+			get
+			{
+				if (int.TryParse(UserActionRaw, out var action))
+					return action;
+				return null;
+			}
+		}
+		public DateTime? ProcessedOn { get; set; }
+	}
+}
