@@ -1,0 +1,202 @@
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web;
+using System.Web.Services;
+
+namespace WAMD_Service
+{
+	/// <summary>
+	/// Summary description for WAMD
+	/// </summary>
+	[WebService(Namespace = "http://tempuri.org/")]
+	[WebServiceBinding(ConformsTo = WsiProfiles.BasicProfile1_1)]
+	[System.ComponentModel.ToolboxItem(false)]
+	// To allow this Web Service to be called from script, using ASP.NET AJAX, uncomment the following line. 
+	// [System.Web.Script.Services.ScriptService]
+	public class WAMD : System.Web.Services.WebService
+	{
+		string RESTBaseUri = (ConfigurationManager.AppSettings["RESTBaseUri"] != null ? ConfigurationManager.AppSettings["RESTBaseUri"].ToString() : "");
+		string RESTClientId = (ConfigurationManager.AppSettings["RESTClientId"] != null ? ConfigurationManager.AppSettings["RESTClientId"].ToString() : "");
+		string RESTSecretKey = (ConfigurationManager.AppSettings["RESTSecretKey"] != null ? ConfigurationManager.AppSettings["RESTSecretKey"].ToString() : "");
+		bool createLogFile = Convert.ToBoolean(ConfigurationManager.AppSettings["createLogFile"].ToString());
+		string filePath = ConfigurationManager.AppSettings["logFilePath"].ToString() + "spplatform_errorlog.txt";
+
+
+		#region "REST WAMD Payment History"
+		[WebMethod]
+		public DataSet getTransactionHistory(string customerID, string fromDate, string toDate)
+		{
+			DataSet DS = null;
+			Task<DataSet> TDS = null;
+
+			try
+			{
+				if (!string.IsNullOrEmpty(customerID) && !string.IsNullOrEmpty(fromDate) && !string.IsNullOrEmpty(toDate))
+				{
+					TDS = Task.Run(async () => await RetrieveTransactionHistoryJSON(customerID, fromDate, toDate).ConfigureAwait(false));
+
+					if (TDS.Result.Tables.Count > 0)
+					{
+						DS = TDS.Result;
+					}
+				}
+
+			}
+			catch (Exception exc)
+			{
+				if (createLogFile) WriteLogFile.WriteLog(filePath, "SPPlatform Services :: Exception Occurred in method - getTransactionHistory(" + customerID + " " + fromDate + " " + toDate + ") : " + exc.ToString());
+			}
+
+			return DS;
+		}
+
+		public async Task<DataSet> RetrieveTransactionHistoryJSON(string customerID, string _fromDate, string _toDate)
+		{
+
+			System.Net.ServicePointManager.ServerCertificateValidationCallback += (sender, certificate, chain, sslPolicyErrors) => true;
+
+			string result = "";
+			DataSet dataSet = new DataSet("getTransactionHistory");
+			DataTable dt = null;
+			string requestId = Guid.NewGuid().ToString();
+			string requestTime = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+
+
+			HttpMessageHandler handler = new HttpClientHandler() { };
+			HttpClient httpClient = new HttpClient(handler)
+			{
+				BaseAddress = new Uri(RESTBaseUri),
+				Timeout = new TimeSpan(0, 2, 0)
+			};
+			httpClient.DefaultRequestHeaders.Add("ContentType", "application/json");
+			httpClient.DefaultRequestHeaders.Add("request-id", requestId);
+			httpClient.DefaultRequestHeaders.Add("request-time", requestTime);
+			httpClient.DefaultRequestHeaders.Add("channel-id", "3");
+
+			byte[] plainTextBytes = Encoding.UTF8.GetBytes($"{RESTClientId}:{RESTSecretKey}");
+			string val = Convert.ToBase64String(plainTextBytes);
+			httpClient.DefaultRequestHeaders.Add("Authorization", $"Basic {val}");
+
+			string payload = JsonConvert.SerializeObject(new
+			{
+				customerId = customerID,
+				customerIdType = "NID",
+				pageNo = 1,
+				pageSize = 10,
+				fromDate = _fromDate,
+				toDate = _toDate
+			});
+
+			StringContent httpContent = new StringContent(payload, Encoding.UTF8, "application/json");
+
+			HttpResponseMessage responseMessage = await httpClient.PostAsync("/ips/channel/v1/history/transactionHistory", httpContent).ConfigureAwait(false);
+			if (responseMessage.Content != null)
+			{
+				//responseMessage.EnsureSuccessStatusCode();
+				result = await responseMessage.Content.ReadAsStringAsync();
+			}
+
+			if (!result.ToString().Contains("Internal System Error"))
+			{
+				//string s = "{r:[" + result.ToString() + "]}";
+				dt = GetDataTableFromJsonString(result,"transactionList");
+			}
+
+			DataRow extraRow = dt.NewRow();
+			extraRow["ids_eteId"] = "Sequence Id not found.";
+
+			dt.Rows.Add(extraRow);
+
+
+			dataSet.Tables.Add(dt);
+			return dataSet;
+		}
+		#endregion
+
+		public DataTable GetDataTableFromJsonString(string json,string propertyName)
+		{
+			var jsonObject = JObject.Parse(json);
+
+			var jsonArray = JArray.Parse(jsonObject.GetValue(propertyName).ToString());
+			var dataTable = new DataTable();
+
+			foreach (JObject obj in jsonArray)
+			{
+				foreach (var property in obj.Properties())
+				{
+					if (property.Value.Type == JTokenType.Object)
+					{
+						foreach (var subProperty in ((JObject)property.Value).Properties())
+						{
+							string columnName = $"{property.Name}_{subProperty.Name}";
+							if (!dataTable.Columns.Contains(columnName))
+							{
+								dataTable.Columns.Add(columnName, typeof(string));
+							}
+						}
+					}
+					else
+					{
+						if (!dataTable.Columns.Contains(property.Name))
+						{
+							dataTable.Columns.Add(property.Name, typeof(string));
+						}
+					}
+				}
+			}
+
+			foreach (JObject obj in jsonArray)
+			{
+				DataRow row = dataTable.NewRow();
+				foreach (var property in obj.Properties())
+				{
+					if (property.Value.Type == JTokenType.Object)
+					{
+						foreach (var subProperty in ((JObject)property.Value).Properties())
+						{
+							string columnName = $"{property.Name}_{subProperty.Name}";
+							row[columnName] = subProperty.Value.ToString();
+						}
+					}
+					else
+					{
+						row[property.Name] = property.Value.ToString();
+					}
+				}
+				dataTable.Rows.Add(row);
+			}
+
+			return dataTable;
+		}
+
+		public class WriteLogFile
+		{
+			public static bool WriteLog(string strFilePath, string strMessage)
+			{
+				try
+				{
+					FileStream objFilestream = new FileStream(strFilePath, FileMode.Append, FileAccess.Write);
+					StreamWriter objStreamWriter = new StreamWriter((Stream)objFilestream);
+					objStreamWriter.WriteLine(strMessage);
+					objStreamWriter.Close();
+					objFilestream.Close();
+					return true;
+				}
+				catch
+				{
+					return false;
+				}
+			}
+		}
+	}
+}
