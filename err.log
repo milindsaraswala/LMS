@@ -1,0 +1,37 @@
+const createFinancialSubTable = (
+  previousYearTitle: string,
+  userKPI: any
+): Table => {
+  return new Table({
+    width: {
+      size: 100,
+      type: WidthType.PERCENTAGE
+    },
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+      bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+      left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+      right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" }
+    },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph(`${previousYearTitle} Closing`)] }),
+          new TableCell({ children: [new Paragraph(String(userKPI.LastYearClosing || ""))] }),
+          new TableCell({ children: [new Paragraph("Baseline")] }),
+          new TableCell({ children: [new Paragraph(String(userKPI.Baseline || ""))] })
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph("Target")] }),
+          new TableCell({ children: [new Paragraph(String(userKPI.EndTarget || ""))] }),
+          new TableCell({ children: [new Paragraph("")] }),
+          new TableCell({ children: [new Paragraph("")] })
+        ]
+      })
+    ]
+  });
+};
