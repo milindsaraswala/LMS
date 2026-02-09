@@ -1,3 +1,0 @@
-...(userKPI.SubCategory === "Financial" && new TableRow({}))]
-
-Type 'TableRow' must have a '[Symbol.iterator]()' method that returns an iterator.ts(2488)
