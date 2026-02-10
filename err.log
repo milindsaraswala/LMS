@@ -1,0 +1,1 @@
+Submit failed: Case creation is failed: {"error":{"code":"-1, Microsoft.SharePoint.Client.InvalidClientQueryException","message":"The property 'MobileNumber' does not exist on type 'SP.Data.DisputeCasesListItem'. Make sure to only use property names that are defined by the type."}}
