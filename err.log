@@ -1,0 +1,1645 @@
+import { WebPartContext } from "@microsoft/sp-webpart-base";
+import * as React from "react";
+import { apiGet, apiPost, decodeString, DISPUTE_REASONS, encodeString, getCleanUserId, isAttachmentRequired, SharePointCaseService } from "../../../common";
+import { TransactionStatus } from "../../../common/CaseStatus";
+// import { calculateCaseStatusFromTransactions } from "../../../common/CaseStatusCalculator";
+import NintexWorkflowService from "../../../common/NintexWorkflowService";
+import { SharePointDisputeService } from "../../../common/SharePointDisputeService";
+import CustomerLookup, { ICustomerCard, ICustomerInfo, ICustomerLookupResult } from "../../../components/customer";
+import CaseDashboard from "../../../components/dashboard/CaseDashboard";
+import CaseActionHistoryPanel from "../../../components/workflow/CaseHistoryPanel";
+import WorkflowActionPanel from "../../../components/workflow/WorkflowActionPanel";
+import { IDisputeTransaction, IExistingDisputeRow } from "../../../models/IDisputeTransaction";
+
+export type UiStatus = "idle" | "customerFound" | "starting" | "waiting" | "approved" | "rejected" | "failed" | "timeout";
+
+export interface IProps {
+  apiBaseUrl: string;
+  spHttpClient: any;
+  siteUrl: string;
+  listTitle: string;
+  context: WebPartContext;
+}
+
+export interface IState {
+  status: UiStatus;
+
+  customer?: ICustomerInfo;
+  cards?: ICustomerCard[];
+
+  message?: string;
+
+  // PACI
+  requestId?: string;
+  secondsLeft: number;
+  resultCode?: number;
+  resultDescription?: string;
+
+  transactions: IDisputeTransaction[];
+  currentCaseRows?: IExistingDisputeRow[];
+
+  loadingExisting: boolean;
+  previousCaseRows: IExistingDisputeRow[];
+
+  submitting?: boolean;
+  mockPaci: boolean;
+
+  isNewCase: boolean;
+  currentCaseId?: string;
+  caseItemId?: number;
+
+  isCaseLocked: boolean;
+
+  view: "dashboard" | "newCase" | "openCase";
+  selectedCaseId?: number;
+
+  showCommentModal?: boolean;
+  selectedComment?: string;
+
+  caseStatus?: string;
+
+  // block card for agent
+  payuInProgress?: boolean;
+
+  // FEATURE FLAG
+  showInquiryOnly: boolean;
+}
+
+export default class FlowardClaim extends React.Component<IProps, IState> {
+  private pollTimer?: number;
+  private countdownTimer?: number;
+
+  private spSvc: SharePointDisputeService;
+  private caseSvc: SharePointCaseService;
+  private nintexSvc: NintexWorkflowService;
+
+  constructor(props: IProps) {
+    super(props);
+
+    this.spSvc = new SharePointDisputeService(props.spHttpClient, props.siteUrl, props.listTitle);
+    this.caseSvc = new SharePointCaseService(props.spHttpClient, props.siteUrl, "DisputeCases");
+    this.nintexSvc = new NintexWorkflowService(props.context);
+
+    this.state = {
+      status: "idle",
+      secondsLeft: 300,
+      transactions: [],
+      loadingExisting: false,
+      previousCaseRows: [],
+      submitting: false,
+      mockPaci: true, // Mocking Authentication
+      isNewCase: false,
+      currentCaseRows: [],
+      currentCaseId: undefined,
+      isCaseLocked: false,
+
+      view: "dashboard",
+      selectedCaseId: undefined,
+
+      showInquiryOnly: false
+    };
+  }
+
+  public componentWillUnmount(): void {
+    this.clearTimers();
+  }
+
+  public async componentDidMount() {
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get("c");
+
+    if (encoded) {
+      try {
+        const decoded = decodeString(encoded);
+        const caseItemId = parseInt(decoded, 10);
+
+        if (!isNaN(caseItemId)) {
+          await this.openExistingCase(caseItemId);
+          return;
+        }
+      } catch (e) {
+        console.warn("Invalid case link");
+      }
+    }
+  }
+
+  public render(): React.ReactElement<IProps> {
+    const { view, showInquiryOnly } = this.state;
+
+    return (
+      <div style={{ padding: 12, maxWidth: 1200 }}>
+        {this.renderHeader()}
+
+        {showInquiryOnly && this.renderCaseScreen()}
+
+        {/* Normal Mode */}
+        {!showInquiryOnly && view === "dashboard" && this.renderDashboard()}
+        {!showInquiryOnly && view !== "dashboard" && this.renderCaseScreen()}
+      </div>
+    );
+  }
+
+  private renderDashboard(): React.ReactElement<any> {
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>Dispute Case</div>
+            <div style={{ fontSize: 13, color: "#6b7280" }}>Manage customer disputes and refunds</div>
+          </div>
+          <button
+            style={{
+              padding: "8px 16px",
+              background: "#2563eb",
+              color: "#fff",
+              border: "none",
+              borderRadisu: 6,
+              fontWeight: 600
+            }}
+            onClick={this.startNewCase}>
+            + Create New Case
+          </button>
+        </div>
+
+        <CaseDashboard caseSvc={this.caseSvc} onSelectCase={this.openExistingCase} />
+      </div>
+    );
+  }
+
+  private renderHeader(): React.ReactElement<any> {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 20px",
+          borderBottom: "1px solid #e5e7eb",
+          background: "#ffffff",
+          marginBottom: 16
+        }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <img src={`${this.props.siteUrl}/SiteAssets/BBYN_logo.png`} alt="Boubyan Bank" style={{ height: 40 }} />
+          <div
+            style={{
+              width: 1,
+              height: 36,
+              background: "#e5e7eb"
+            }}
+          />
+          <img src={`${this.props.siteUrl}/SiteAssets/floward.png`} alt="Floward" style={{ height: 100 }} />
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1f2937" }}>Floward Claim Management</div>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>Live Request (Gift Card Refund & Claims)</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 12, color: "#6b7280" }}>
+          Logged in as <b>{this.props.context.pageContext.user.displayName}</b>
+        </div>
+      </div>
+    );
+  }
+
+  private startNewCase = () => {
+    if (this.state.showInquiryOnly) {
+      return;
+    }
+
+    this.setState({
+      view: "newCase",
+      customer: undefined,
+      cards: undefined,
+      previousCaseRows: [],
+      transactions: [],
+      currentCaseRows: [],
+      currentCaseId: undefined,
+      caseItemId: undefined,
+      isNewCase: false,
+      isCaseLocked: false,
+      status: "idle"
+    });
+  };
+
+  private openExistingCase = async (caseItemId: number) => {
+    const caseInfo = await this.caseSvc.getCaseById(caseItemId);
+    const rows = await this.spSvc.getByCaseId(caseInfo.caseId);
+
+    const isLocked = caseInfo.status && caseInfo.status !== "New" && caseInfo.status !== "Draft";
+
+    this.setState({
+      view: "openCase",
+      caseItemId,
+      currentCaseId: caseInfo.caseId,
+      caseStatus: caseInfo.status || "Pending With Card Operation",
+      customer: {
+        civilId: caseInfo.civilId,
+        fullNameEn: caseInfo.customerName,
+        mobile: caseInfo.mobileNumber
+      } as any,
+      previousCaseRows: [],
+      currentCaseRows: rows,
+      isCaseLocked: isLocked,
+      isNewCase: false
+      // status: "approved"
+    });
+  };
+
+  private renderCaseScreen(): React.ReactElement<any> {
+    const { customer, cards, status, message, secondsLeft, requestId, transactions, previousCaseRows, loadingExisting, submitting } = this.state;
+
+    const isCreatingCase = this.state.isNewCase === true && this.state.status === "approved";
+
+    return (
+      <div>
+        {!this.state.showInquiryOnly && (
+          <button style={{ marginBottom: 10 }} onClick={() => this.setState({ view: "dashboard" })}>
+            Back to Dashboard
+          </button>
+        )}
+
+        {this.state.caseItemId && (
+          <div style={{ marginBottom: 12 }}>
+            <span
+              style={{
+                padding: "4px 12px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#fff",
+                background: this.getCaseBadgeColor(),
+                display: "inline-block"
+              }}>
+              {this.getCaseBadgeText()}
+            </span>
+          </div>
+        )}
+
+        {
+          /*this.state.view === "newCase"*/ (this.state.showInquiryOnly || this.state.view === "newCase") && (
+            <CustomerLookup apiBaseUrl={this.props.apiBaseUrl} onCustomerFound={this.onCustomerFound} onCustomerNotFound={this.onCustomerNotFound} />
+          )
+        }
+
+        {this.state.showInquiryOnly && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 10,
+              background: "#f8fafc",
+              border: "1px dashed #cbd5e1",
+              color: "#475569",
+              fontSize: 13
+            }}>
+            Customer inquiry only is enabled.
+            <br />
+            Case creation and processing will be enabled later.
+          </div>
+        )}
+
+        {!this.state.showInquiryOnly && customer && (
+          <div style={cardStyle}>
+            <div style={{ marginBottom: 8 }}>
+              <b>Customer:</b> {customer.fullNameEn}
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <b>Civil ID</b> {customer.civilId}
+            </div>
+            <div>
+              <b>Mobile : </b> {customer.mobile}
+            </div>
+
+            {this.isPaciApproved() && (!this.state.cards || this.state.cards.length === 0) && (
+              <div style={{ color: "#b00020", fontWeight: 600, marginTop: 8 }}>Card information is missing. Please research the customer.</div>
+            )}
+
+            {!this.isWorkflowstarted() && (
+              <div>
+                <div style={{ marginTop: 10 }}>
+                  {/* <label>
+                    <input type="checkbox" checked={this.state.mockPaci} onChange={(e) => this.setState({ mockPaci: (e.target as HTMLInputElement).checked })} /> Mock PACI Approval
+                    (testing)
+                  </label> */}
+                </div>
+
+                <button onClick={() => this.startPaciAuth()} disabled={this.isPaciApproved() || status === "starting" || status === "waiting"} style={{ padding: "8px 14px" }}>
+                  Authenticate with PACI
+                </button>
+              </div>
+            )}
+
+            {status === "waiting" && (
+              <div style={{ marginTop: 10 }}>
+                <div>
+                  <b>RequestId:</b> {requestId}
+                </div>
+                <div>
+                  <b>Time left:</b> {secondsLeft}s
+                </div>
+              </div>
+            )}
+
+            {message && <div style={{ marginTop: 10 }}>{message}</div>}
+
+            {/* Existing transactions */}
+            {previousCaseRows.length > 0 && (
+              <div
+                style={{
+                  background: "#fff3cd",
+                  border: "1px solid #ffeeba",
+                  padding: 8,
+                  marginTop: 10,
+                  marginBottom: 10,
+                  fontSize: 13
+                }}>
+                This customer already has <b>{previousCaseRows.length}</b> previous case(s).
+              </div>
+            )}
+            {previousCaseRows.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <h4 style={{ margin: "10px 0", color: "#6b7280" }}>
+                  Previous Transactions
+                  <span style={{ fontSize: 12, color: "#6b7280" }}> 🔒 Read-Only </span>
+                </h4>
+                {loadingExisting ? <div>Loading previous transactions...</div> : this.renderExistingTable(previousCaseRows, false)}
+                <div style={{ marginTop: 10, color: "#b00020", fontWeight: 600 }}>This customer has previous case(s). You may proceed to create new case.</div>
+              </div>
+            )}
+
+            {this.state.isCaseLocked && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 10,
+                  background: "#e7f3ff",
+                  border: "1px solid #90caf9",
+                  color: "#0d47a1",
+                  fontWeight: 600
+                }}>
+                This case has been submitted for processing and is now read-only.
+              </div>
+            )}
+
+            {this.state.currentCaseRows && this.state.currentCaseRows.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <h4 style={{ margin: "10px 0", color: "#1d4ed8" }}>Current Case</h4>
+
+                {this.renderExistingTable(this.state.currentCaseRows, true)}
+              </div>
+            )}
+
+            {previousCaseRows.length > 0 && !this.state.isNewCase && (!this.state.currentCaseRows || this.state.currentCaseRows.length === 0) && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  onClick={() =>
+                    this.setState({
+                      isNewCase: true,
+                      currentCaseId: this.generateCaseId(),
+                      transactions: [],
+                      currentCaseRows: [],
+                      requestId: this.state.requestId,
+                      caseStatus: undefined,
+                      isCaseLocked: false,
+                      // status: "approved",
+                      message: "New Case started. You may add transaction"
+                    })
+                  }
+                  style={{ padding: "8px 14px" }}>
+                  Create New Case
+                </button>
+              </div>
+            )}
+
+            {/* After PACI approval - allow adding multiple transactions */}
+            {isCreatingCase && !this.state.isCaseLocked && (
+              <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 12 }}>
+                <h4 style={{ marginTop: 0 }}>Add Transactions</h4>
+
+                <button onClick={this.addTransactionRow} style={primaryBtn}>
+                  + Add Transaction
+                </button>
+
+                {transactions.length === 0 && <div style={{ marginTop: 10 }}>No transactions added yet.</div>}
+
+                {transactions.map((t) => this.renderTransactionRow(t, cards))}
+
+                <div style={{ marginTop: 12 }}>
+                  <button onClick={this.submitToSharePoint} disabled={submitting || transactions.length === 0} style={primaryBtn}>
+                    {submitting ? "Submitting..." : "Submit"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {this.state.caseItemId && !this.state.isCaseLocked && Array.isArray(this.state.currentCaseRows) && this.state.currentCaseRows.length > 0 && (
+              <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #ddd" }}>
+                <button
+                  onClick={this.submitCaseForWorkflow}
+                  style={{
+                    padding: "10px 18px",
+                    background: "#0078d4",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 3,
+                    fontWeight: 600
+                  }}>
+                  Submit Case for Processing
+                </button>
+              </div>
+            )}
+            {this.isDraftCase() && this.state.caseItemId && (
+              <div style={{ marginTop: 16 }}>
+                <button style={dangerBtn} onClick={this.deleteDraftCase}>
+                  Delete Draft Case
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {this.state.view === "openCase" && this.state.caseItemId && this.state.isCaseLocked && (
+          <WorkflowActionPanel
+            nintexSvc={this.nintexSvc}
+            caseSvc={this.caseSvc}
+            listName="DisputeCases"
+            itemId={this.state.caseItemId}
+            onActionCompleted={() => {
+              this.setState({
+                view: "dashboard",
+                message: undefined,
+                selectedCaseId: undefined,
+                customer: undefined,
+                cards: undefined,
+                previousCaseRows: [],
+                currentCaseRows: [],
+                isCaseLocked: false
+              });
+            }}
+          />
+        )}
+        {this.state.caseItemId && <CaseActionHistoryPanel nintexSvc={this.nintexSvc} caseItemId={this.state.caseItemId} />}
+
+        {this.state.showCommentModal && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.4)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000
+            }}>
+            <div
+              style={{
+                background: "#fff",
+                padding: 16,
+                width: 450,
+                maxHeight: "70%",
+                overflowY: "auto",
+                borderRadius: 4
+              }}>
+              <h4>Transaction Comment</h4>
+
+              <div
+                style={{
+                  whiteSpace: "pre-wrap",
+                  marginTop: 8,
+                  fontSize: 14
+                }}>
+                {this.state.selectedComment}
+              </div>
+
+              <div style={{ textAlign: "right", marginTop: 16 }}>
+                <button
+                  onClick={() =>
+                    this.setState({
+                      showCommentModal: false,
+                      selectedComment: undefined
+                    })
+                  }>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  private renderExistingTable(rows: IExistingDisputeRow[], isCurrentCase: boolean): React.ReactElement<any> {
+    if (!rows || rows.length === 0) {
+      return <div>No previous transactions found.</div>;
+    }
+
+    const tableWrapperStyle: React.CSSProperties = {
+      background: isCurrentCase ? "#ffffff" : "#f9fafb",
+      border: isCurrentCase ? "1px solid #d0d7de" : "1px dashed #c7c7c7",
+      padding: 8,
+      borderRadius: 4
+    };
+
+    return (
+      <div style={tableWrapperStyle}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={th}>ID</th>
+              <th style={th}>Status</th>
+              <th style={th}>Card</th>
+              <th style={th}>Date</th>
+              <th style={th}>Time</th>
+              <th style={th}>Amount</th>
+              <th style={th}>Merchant</th>
+              <th style={th}>Reason</th>
+              <th style={th}>Comment</th>
+              <th style={th}>Created</th>
+              <th style={th}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.id}
+                style={{
+                  backgroundColor: isCurrentCase ? "#ffffff" : "#fcfcfc",
+                  color: isCurrentCase ? "#000" : "#555"
+                }}>
+                <td style={td}>{r.id}</td>
+                {/*<td style={td}>{r.status || ""}</td>*/}
+                <td style={td}>
+                  <div>
+                    <div>{r.status || ""}</div>
+                    {isCurrentCase && this.isCaseWithOutbound() && (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          marginTop: 4,
+                          padding: "2px 6px",
+                          fontSize: 11,
+                          borderRadius: 4,
+                          background: "#f3f4f6",
+                          color: "#374151",
+                          fontWeight: 600
+                        }}>
+                        Moved to Outbound
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td style={td}>{r.cardMasked || ""}</td>
+                <td style={td}>{this.formatDate(r.txnDate) || ""}</td>
+                <td style={td}>{this.formatTime(r.txnTime) || ""}</td>
+                <td style={td}>{r.txnAmount !== undefined ? r.txnAmount : ""}</td>
+                <td style={td}>{r.merchantName || ""}</td>
+                <td style={td}>{this.getDisputeReasonText(r.disputeReason) || ""}</td>
+                <td style={td}>
+                  {r.comment ? (
+                    <a
+                      style={{ color: "#0078d4", cursor: "pointer" }}
+                      onClick={() => {
+                        this.setState({
+                          showCommentModal: true,
+                          selectedComment: r.comment
+                        });
+                      }}>
+                      View comment
+                    </a>
+                  ) : (
+                    <span style={{ color: "#999" }}> - </span>
+                  )}
+                </td>
+                <td style={td}>{this.formatDate(r.created) || ""}</td>
+                <td style={td}>
+                  {isCurrentCase && this.canDeleteTransaction() && (
+                    <button style={{ marginRight: 6 }} onClick={() => this.removeSavedTransaction(r)}>
+                      Delete
+                    </button>
+                  )}
+                  {this.canAgentDoFullRefund(r) && (
+                    <button
+                      style={dangerBtn}
+                      disabled={r.refundInProgress}
+                      // style={{
+                      //   padding: "4px 8px",
+                      //   opacity: r.refundInProgress || r.status === "Refund Initiated" ? 0.6 : 1
+                      // }}
+                      onClick={() => this.confirmAndRefund(r)}>
+                      {r.refundInProgress ? "Processing..." : "Full Refund"}
+                    </button>
+                  )}
+                  {this.canCardOpsDoFullRefund(r) && (
+                    <button disabled={r.refundInProgress} style={primaryBtn} onClick={() => this.confirmAndRefund(r)}>
+                      Full Refund
+                    </button>
+                  )}
+                  {this.canCardOpsDoPartialRefund(r) && (
+                    <div style={{ marginTop: 6 }}>
+                      <input
+                        type="number"
+                        min="0.001"
+                        step="0.001"
+                        max={r.txnAmount}
+                        placeholder="Refund Amount"
+                        value={(r as any).refundAmount || ""}
+                        onChange={(e) => {
+                          const val = (e.target as HTMLInputElement).value;
+                          this.setState((prev) => ({
+                            currentCaseRows: prev.currentCaseRows.map((x) => (x.id === r.id ? { ...x, refundAmount: val } : x))
+                          }));
+                        }}
+                        style={{
+                          width: 90,
+                          marginRight: 6
+                        }}
+                      />
+                      <button
+                        style={primaryBtn}
+                        disabled={r.refundInProgress || !(r as any).refundAmount || Number((r as any).refundAmount) <= 0 || Number((r as any).refundAmount) > r.txnAmount}
+                        onClick={() => this.callPartialRefundApi(r, Number((r as any).refundAmount))}>
+                        Partial Refund
+                      </button>
+
+                      {/* <div style={{ marginTop: 4 }}>
+                        <button disabled={r.refundInProgress || !(r as any).partialAmount} onClick={() => this.confirmPartialRefundByCardOps(r, Number((r as any).partialAmount))}>
+                          Partial Refund
+                        </button>
+                      </div> */}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  private renderTransactionRow(t: IDisputeTransaction, cards: ICustomerCard[]): React.ReactElement<any> {
+    const attachmentNeeded = isAttachmentRequired(t.disputeReason);
+    const rowError = this.validateOneTransaction(t);
+
+    return (
+      <div key={t.localId} style={{ marginTop: 12, border: "1px solid #ddd", padding: 12, borderRadius: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <b>Transaction</b>
+          {this.canDeleteTransaction() && (
+            <button onClick={() => this.removeTransactionRow(t.localId)} style={dangerBtn}>
+              Remove
+            </button>
+          )}
+        </div>
+
+        {rowError && <div style={{ marginTop: 6, color: "#b00020", fontWeight: 700 }}>{rowError}</div>}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+          <div>
+            <div>
+              <b>Card</b>
+            </div>
+            {/* <pre style={{ fontSize: 11 }}>{JSON.stringify(cards, null, 2)}</pre> */}
+            <select
+              value={t.cardNo || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { cardNo: (e.target as HTMLSelectElement).value })}
+              style={{ padding: 8, width: "100%" }}>
+              <option value="">-- Select card --</option>
+              {cards.map((c) => (
+                <option key={c.cardNo} value={c.cardNo}>
+                  {c.maskedCardNo || c.cardNo}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div>
+              <b>Dispute Reason</b>
+            </div>
+            <select
+              value={t.disputeReason || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { disputeReason: (e.target as HTMLSelectElement).value })}
+              style={{ padding: 8, width: "100%" }}>
+              {DISPUTE_REASONS.map((r) => (
+                <option key={r.key} value={r.key}>
+                  {r.text}
+                </option>
+              ))}
+            </select>
+            {attachmentNeeded && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                <b>Attachment is required</b> for this reason.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div>
+              <b>Transaction Date</b>
+            </div>
+            <input
+              type="date"
+              value={t.txnDate || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { txnDate: (e.target as HTMLInputElement).value })}
+              style={{ padding: 8, width: "96%" }}
+            />
+          </div>
+
+          <div>
+            <div>
+              <b>Transaction Time</b>
+            </div>
+            <input
+              type="time"
+              value={t.txnTime || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { txnTime: (e.target as HTMLInputElement).value })}
+              style={{ padding: 8, width: "96%" }}
+            />
+          </div>
+
+          <div>
+            <div>
+              <b>Transaction Amount</b>
+            </div>
+            <input
+              type="text"
+              value={t.txnAmount || ""}
+              onChange={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                if (/^\d*\.?\d*$/.test(v)) {
+                  this.updateTransaction(t.localId, { txnAmount: v });
+                }
+              }}
+              placeholder="e.g. 12.500"
+              style={{ padding: 8, width: "96%", border: "1px inset #767676", backgroundColor: "field", backgroundImage: "initial" }}
+            />
+          </div>
+
+          <div>
+            <div>
+              <b>Merchant Name</b>
+            </div>
+            <input
+              type="text"
+              value={t.merchantName || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { merchantName: (e.target as HTMLInputElement).value })}
+              style={{ padding: 8, width: "96%", border: "1px inset #767676", backgroundColor: "field", backgroundImage: "initial" }}
+            />
+          </div>
+
+          <div style={{ gridColumn: "1 / span 2" }}>
+            <div>
+              <b>Comment</b>
+            </div>
+            <textarea
+              value={t.comment || ""}
+              onChange={(e) => this.updateTransaction(t.localId, { comment: (e.target as HTMLTextAreaElement).value })}
+              style={{ padding: 8, width: "98%", minHeight: 70 }}
+            />
+          </div>
+
+          <div style={{ gridColumn: "1 / span 2" }}>
+            <div>
+              <b>Attachment {attachmentNeeded ? "(Required)" : "(Optional)"}</b>
+            </div>
+            <input
+              type="file"
+              onChange={(e) => {
+                const files = (e.target as HTMLInputElement).files;
+                this.updateTransaction(t.localId, { attachment: files && files.length > 0 ? files[0] : null });
+              }}
+            />
+            {t.attachment && <div style={{ fontSize: 12, marginTop: 4 }}>{t.attachment.name}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  private clearTimers(): void {
+    if (this.pollTimer !== undefined) {
+      window.clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    if (this.countdownTimer !== undefined) {
+      window.clearInterval(this.countdownTimer);
+      this.countdownTimer = undefined;
+    }
+  }
+
+  private onCustomerFound = async (result: ICustomerLookupResult): Promise<void> => {
+    this.clearTimers();
+    this.setState({
+      customer: result.customer,
+      cards: result.cards,
+      status: "customerFound",
+      message: undefined,
+      requestId: undefined,
+      secondsLeft: 300,
+      resultCode: undefined,
+      resultDescription: undefined,
+      transactions: [],
+      loadingExisting: true,
+      previousCaseRows: [],
+      isNewCase: false
+    });
+
+    // load existing disputes for civilId
+    try {
+      const rows = await this.spSvc.getExistingByCivilId(result.customer.civilId);
+      this.setState({ previousCaseRows: rows, loadingExisting: false });
+    } catch (e) {
+      this.setState({
+        previousCaseRows: [],
+        loadingExisting: false,
+        message: "Failed to load previous transactions: " + (e && (e as any).message ? (e as any).message : "")
+      });
+    }
+  };
+
+  private onCustomerNotFound = (msg: string) => {
+    this.clearTimers();
+    this.setState({
+      customer: undefined,
+      cards: undefined,
+      status: "idle",
+      message: msg,
+      requestId: undefined,
+      secondsLeft: 300,
+      resultCode: undefined,
+      resultDescription: undefined,
+      transactions: [],
+      previousCaseRows: [],
+      loadingExisting: false
+    });
+  };
+
+  private async startPaciAuth(): Promise<void> {
+    const customer: ICustomerInfo = this.state.customer;
+    if (!customer || !customer.civilId) {
+      this.setState({ status: "failed", message: "Please lookup valid Civil ID first." });
+      return;
+    }
+
+    // MOCK MODE (temporary)
+    // if (this.state.mockPaci) {
+    //   this.clearTimers();
+
+    //   const fakeRequestId = "MOCK - " + new Date().getTime();
+
+    //   this.setState({
+    //     status: "approved",
+    //     requestId: fakeRequestId,
+    //     currentCaseId: this.state.currentCaseId || this.generateCaseId(),
+    //     isNewCase: true,
+    //     resultCode: 10,
+    //     resultDescription: "Authenticated (Mock)",
+    //     message: "PACI Approved (Mock mode)",
+    //     secondsLeft: 300
+    //   });
+
+    //   return;
+    // }
+
+    // REAL PACI
+    this.clearTimers();
+    this.setState({ status: "starting", message: "Sending PACI authentication request...", secondsLeft: 300 });
+    try {
+      const url: string = this.props.apiBaseUrl.replace(/\/$/, "") + "/api/paci/initiate-auth";
+
+      const resp = await apiPost<{ RequestId: string }>(url, {
+        authenticationReasonAr: "طلب استرداد مبلغ لبطاقة الهدايا",
+        authenticationReasonEn: "Refund claim for a Gift Card",
+        civilNo: customer.civilId,
+        assuranceLevel: "Medium",
+        serviceDescriptionEN: "Refund claim for a Gift Card",
+        serviceDescriptionAR: "طلب استرداد مبلغ لبطاقة الهدايا",
+        additionalData: "",
+        challenge: ""
+      });
+
+      if (!resp || !resp.RequestId) {
+        this.setState({ status: "failed", message: "No RequestId returned from PACI initiate API." });
+        return;
+      }
+
+      this.setState({ status: "waiting", requestId: resp.RequestId, message: "Waiting for customer approval..." });
+
+      this.startCountdown(resp.RequestId);
+      this.startPolling(resp.RequestId);
+    } catch (e) {
+      this.setState({ status: "failed", message: e && (e as any).message ? (e as any).message : "Failed to initiate PACI auth." });
+    }
+  }
+
+  private startCountdown(requestId: string) {
+    this.countdownTimer = window.setInterval(() => {
+      this.setState((prev) => {
+        const next = prev.secondsLeft - 1;
+        if (next <= 0) {
+          this.clearTimers();
+          return { ...prev, secondsLeft: 0, status: "timeout", message: "Timed out (5 minutes). No response received." };
+        }
+        return { ...prev, secondsLeft: next };
+      });
+    }, 1000);
+  }
+
+  private startPolling(requestId: string) {
+    this.pollTimer = window.setInterval(async () => {
+      try {
+        const url = this.props.apiBaseUrl.replace(/\/$/, "") + "/api/paci/status/" + encodeURIComponent(requestId);
+
+        const s = await apiGet<{
+          RequestId: string;
+          IsProcessed: boolean;
+          ResultCode?: number;
+          UserAction?: number;
+          ResultDescription?: string;
+        }>(url);
+
+        if (!s) return;
+
+        const rc = s.ResultCode != null ? Number(s.ResultCode) : null;
+        const ua = s.UserAction != null ? Number(s.UserAction) : null;
+
+        if (rc === null && ua === null) {
+          return;
+        }
+
+        this.clearTimers();
+
+        const desc = s.ResultDescription;
+
+        if (ua === 2 || rc === 40) {
+          this.setState({
+            status: "rejected",
+            resultCode: rc ? rc : undefined,
+            resultDescription: desc,
+            message: "Customer declined PACI authentication"
+          });
+          return;
+        }
+
+        if (rc === 10) {
+          this.clearTimers();
+
+          this.setState({
+            status: "approved",
+            isNewCase: true,
+            currentCaseId: this.state.currentCaseId || this.generateCaseId(),
+            requestId: s.RequestId,
+            resultCode: rc,
+            resultDescription: desc,
+            message: desc || "Authenticated"
+          });
+          return;
+        }
+
+        this.setState({
+          status: "failed",
+          resultCode: rc ? rc : undefined,
+          resultDescription: desc,
+          message: desc || "Authentication failed"
+        });
+      } catch (err) {
+        // swallow errors, keep polling
+      }
+    }, 3000);
+  }
+
+  private addTransactionRow = (): void => {
+    if (this.state.isCaseLocked) {
+      return;
+    }
+
+    const id = "t_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
+
+    const next: IDisputeTransaction = { localId: id, attachment: null };
+    this.setState((prev) => ({
+      transactions: prev.transactions.concat([next])
+    }));
+  };
+
+  private removeTransactionRow = (localId: string): void => {
+    // if (this.state.isCaseLocked) {
+    //   return;
+    // }
+    if (this.isWorkflowstarted()) {
+      alert("You cannot remove transactions after the case is submitted.");
+      return;
+    }
+    this.setState((prev) => ({
+      transactions: prev.transactions.filter((x) => x.localId !== localId)
+    }));
+  };
+
+  private updateTransaction = (localId: string, patch: Partial<IDisputeTransaction>): void => {
+    if (this.state.isCaseLocked) {
+      return;
+    }
+    this.setState((prev) => ({
+      transactions: prev.transactions.map((x) => (x.localId === localId ? { ...x, ...patch } : x))
+    }));
+  };
+
+  private validateOneTransaction(t: IDisputeTransaction): string | null {
+    if (!t.cardNo) {
+      return "Card is required.";
+    }
+    if (!t.txnDate) {
+      return "Transaction date is required.";
+    }
+    if (!t.txnTime) {
+      return "Transaction time is required.";
+    }
+
+    const now = new Date();
+    const [year, month, day] = t.txnDate.split("-").map(Number);
+    const [hours, minutes] = t.txnTime.split(":").map(Number);
+
+    const txnDateTime = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    if (txnDateTime.getTime() > now.getTime()) {
+      return "Transaction date and time cannot be in the furure.";
+    }
+
+    if (!t.txnAmount || isNaN(Number(t.txnAmount))) {
+      return "Valid amount is required.";
+    }
+    if (!t.merchantName) {
+      return "Merchant name is required.";
+    }
+    if (!t.disputeReason) {
+      return "Dispute reason is required.";
+    }
+
+    if (isAttachmentRequired(t.disputeReason) && !t.attachment) {
+      return "Attachment is required for selected dispute reason.";
+    }
+    return null;
+  }
+
+  private validateAll(): string | null {
+    if (this.state.status !== "approved") {
+      return "PACI must be approved before submitting.";
+    }
+    if (!this.state.customer) {
+      return "Customer is missing.";
+    }
+    if (!this.state.requestId) {
+      return "PACI RequestId is missing.";
+    }
+    if (!this.state.transactions || this.state.transactions.length === 0) {
+      return "Please add at least one transaction.";
+    }
+
+    for (let i = 0; i < this.state.transactions.length; i++) {
+      const err = this.validateOneTransaction(this.state.transactions[i]);
+      if (err) {
+        return "Row " + (i + 1) + ": " + err;
+      }
+    }
+
+    return null;
+  }
+
+  private submitToSharePoint = async (): Promise<void> => {
+    const err = this.validateAll();
+    if (err) {
+      this.setState({ message: err });
+      return;
+    }
+
+    if (!this.state.currentCaseId) {
+      throw new Error("CaseId is missing. Cannot submit case.");
+    }
+
+    const customer = this.state.customer!;
+    const paciRequestId = this.state.requestId!;
+    const cards = this.state.cards || [];
+    const caseId = this.state.currentCaseId;
+    const transactions = [...this.state.transactions];
+
+    this.setState({ submitting: true, message: "Submitting case..." });
+
+    try {
+      let caseItemId = this.state.caseItemId;
+
+      if (!caseItemId) {
+        caseItemId = await this.caseSvc.createCase({
+          caseId: caseId,
+          civilId: customer.civilId,
+          customerName: customer.fullNameEn,
+          mobileNumber: customer.mobile
+        });
+
+        const encoded = encodeString(caseItemId.toString());
+        const deepLink = `${this.props.siteUrl}/SitePages/Floward.aspx?c=${encoded}`;
+
+        await this.caseSvc.updateCaseDeepLink(caseItemId, encoded, deepLink);
+        this.setState({ caseItemId: caseItemId, message: "Case created. Uploading transactions..." });
+      }
+
+      const submitted: IExistingDisputeRow[] = [];
+
+      await Promise.all(
+        transactions.map(async (t) => {
+          let masked = "";
+          let cardExId = "";
+
+          for (let c = 0; c < cards.length; c++) {
+            if (cards[c].cardNo === t.cardNo) {
+              masked = cards[c].maskedCardNo;
+              cardExId = cards[c].cardExid;
+              break;
+            }
+          }
+
+          const itemId = await this.spSvc.addDisputeItem({
+            civilId: customer.civilId,
+            caseId: caseId,
+            paciRequestId: paciRequestId,
+            cardNo: t.cardNo!,
+            maskedCardNo: masked,
+            cardExId: cardExId,
+            txnDate: t.txnDate!,
+            txnTime: t.txnTime!,
+            txnAmount: Number(t.txnAmount),
+            merchantName: t.merchantName!,
+            disputeReason: t.disputeReason!,
+            comment: t.comment || ""
+          });
+
+          if (t.attachment) {
+            await this.spSvc.addAttachment(itemId, t.attachment);
+          }
+
+          submitted.push({
+            id: itemId,
+            caseId: caseId,
+            civilId: customer.civilId,
+            status: "New",
+            cardMasked: masked,
+            cardExId: cardExId,
+            txnDate: t.txnDate!,
+            txnTime: t.txnTime!,
+            txnAmount: Number(t.txnAmount),
+            merchantName: t.merchantName!,
+            disputeReason: t.disputeReason!,
+            comment: t.comment || "",
+            created: new Date().toISOString()
+          });
+        })
+      );
+
+      // refresh existing table
+      // const allRows = await this.spSvc.getExistingByCivilId(customer.civilId);
+      // const currentCaseRows = allRows.filter((r) => r.caseId === this.state.currentCaseId);
+      // const previousRows = allRows.filter((r) => r.caseId !== this.state.currentCaseId);
+
+      this.setState({
+        submitting: false,
+        message: "Transaction(s) added successfully.",
+        transactions: [],
+        currentCaseRows: [...(this.state.currentCaseRows || []), ...submitted],
+        isNewCase: true,
+        status: "approved",
+        caseItemId: caseItemId
+      });
+    } catch (e) {
+      this.setState({
+        submitting: false,
+        message: "Submit failed: " + (e && (e as any).message ? (e as any).message : e ? e.toString() : "")
+      });
+    }
+  };
+
+  private formatDate = (dateStr?: string): string => {
+    if (!dateStr) {
+      return "";
+    }
+    const d = new Date(dateStr);
+    return d.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    });
+  };
+
+  private formatTime = (timeStr?: string): string => {
+    if (!timeStr) {
+      return "";
+    }
+
+    const [h, m] = timeStr.split(":").map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+  };
+
+  private getDisputeReasonText = (key?: string): string => {
+    if (!key) {
+      return "";
+    }
+
+    for (let i = 0; i < DISPUTE_REASONS.length; i++) {
+      if (DISPUTE_REASONS[i].key === key) {
+        return DISPUTE_REASONS[i].text;
+      }
+    }
+
+    return key;
+  };
+
+  private generateCaseId(): string {
+    return `FLW-${new Date().getFullYear()}-${Date.now()}`;
+  }
+
+  private callFullRefundApi = async (cardExid: string): Promise<void> => {
+    const login = this.props.context.pageContext.user.loginName;
+    const userId = getCleanUserId(login);
+
+    const url = `${this.props.apiBaseUrl.replace(/\/$/, "")}/api/floward/refund/full`;
+
+    await apiPost(url, {
+      cardExid: cardExid,
+      userId: userId
+    });
+  };
+
+  private callPartialRefundApi = async (row: IExistingDisputeRow, amount: number): Promise<void> => {
+    // cardExid: string, , claimReference: string
+    if (!this.state.caseItemId || !this.state.currentCaseId) {
+      alert("Case context missing.");
+      return;
+    }
+
+    const caseId = this.state.currentCaseId;
+
+    if (!amount || amount <= 0 || amount > row.txnAmount) {
+      alert("Invalid refund amount.");
+      return;
+    }
+
+    const ok = window.confirm(`Send PayU link for ${amount} on card ${row.cardMasked}?`);
+    if (!ok) return;
+
+    this.setState((prev) => ({
+      currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: true } : r))
+    }));
+
+    try {
+      const login = this.props.context.pageContext.user.loginName;
+      const userId = getCleanUserId(login);
+
+      const url = `${this.props.apiBaseUrl.replace(/\/$/, "")}/api/floward/refund/raiseclaim`;
+
+      await apiPost(url, {
+        cardExid: row.cardExId,
+        amount: amount,
+        userId: userId,
+        claimReference: caseId
+      });
+
+      const status = amount === row.txnAmount ? TransactionStatus.FullRefundCompleted : TransactionStatus.PartialRefundCompleted;
+      const comment = amount === row.txnAmount ? "Full refund by Cards Ops" : `Partial refund (${amount}) by Cards Ops`;
+
+      await this.spSvc.updateTransactionStatus(row.id, status, comment, amount);
+
+      //     // const rows = await this.spSvc.getByCaseId(this.state.currentCaseId!);
+      //     // const caseStatus = calculateCaseStatusFromTransactions(rows);
+
+      //     // await this.caseSvc.updateCaseStatus(this.state.caseItemId!, caseStatus, "Refund processed by Cards Ops");
+
+      //     // this.setState({
+      //     //   currentCaseRows: rows,
+      //     //   caseStatus
+      //     // });
+
+      this.setState((prev) => ({
+        currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: false, status } : r))
+      }));
+    } catch (e) {
+      alert("Failed to send PayU link.");
+      this.setState((prev) => ({
+        currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundAmount: undefined } : r))
+      }));
+    }
+  };
+
+  private confirmAndRefund = async (row: IExistingDisputeRow): Promise<void> => {
+    const ok = window.confirm(`Are you sure you want to initiate full refund and block this card?\n\n${row.cardMasked}`);
+
+    if (!ok) {
+      return;
+    }
+
+    this.setState({ payuInProgress: true, message: "Generating PayU link and blocking card..." });
+
+    this.setState((prev) => ({
+      currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: true } : r))
+    }));
+    try {
+      await this.callFullRefundApi(row.cardExId);
+
+      await this.spSvc.updateTransactionStatus(row.id, TransactionStatus.RefundInitiated, "PayU link generated and card blocked");
+
+      await this.caseSvc.updateCaseStatus(this.state.caseItemId!, "Pending With Card Operation", "PayU link sent to customer");
+
+      this.setState((prev) => ({
+        currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, status: TransactionStatus.RefundInitiated, refundInProgress: false } : r)),
+        payuInProgress: false,
+        caseStatus: "Pending With Card Operation",
+        message: "Avaialble card balance will be refunded and the card will be stopped."
+      }));
+
+      alert("Full refund request sent successfully.");
+    } catch (e) {
+      this.setState((prev) => ({
+        currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: false } : r)),
+        payuInProgress: false,
+        message: "Failed to generate PayU link. Please retry."
+      }));
+    }
+  };
+
+  private submitCaseForWorkflow = async (): Promise<void> => {
+    const ok = window.confirm("Once submitted, this case will be sent to Card Operation and cannot be edited.\n\nDo you want to continue?");
+
+    if (!ok) {
+      return;
+    }
+
+    try {
+      const caseItemId = this.state.caseItemId!;
+      // const caseId = this.state.currentCaseId!;
+
+      await this.caseSvc.updateCaseStatus(caseItemId, "Submitted", "Case submitted by agent");
+
+      await this.caseSvc.updateCaseStatus(caseItemId, "Pending With Card Operation", "Pending With Card Operation queue");
+
+      await this.nintexSvc.logActionHistory({
+        caseItemId: caseItemId,
+        action: "Submit Case",
+        comment: "Case submitted and routed to Card Operation",
+        taskId: null,
+        taskName: ""
+      });
+
+      this.setState({
+        isCaseLocked: true,
+        caseStatus: "Pending With Card Operation",
+        message: "Case submitted successfully and sent to Card Operation."
+      });
+
+      alert("Case submitted successfully.");
+    } catch (e) {
+      alert("Failed to submit case.");
+    }
+  };
+
+  private isCaseWithCardOps(): boolean {
+    const status = this.state.caseStatus;
+
+    return status === "Pending With Card Operation" || status === "Hold By Card Operation"; // || status === "Pending With Outbound" || status === "Rejected By Card Operation"
+  }
+
+  private isCaseWithOutbound(): boolean {
+    const status = this.state.caseStatus;
+
+    return status === "Pending With Outbound";
+  }
+
+  // private sendPayULinkForRow = async (row: IExistingDisputeRow, amount: number): Promise<void> => {
+  //   if (!this.state.caseItemId || !this.state.currentCaseId) {
+  //     alert("Case context missing.");
+  //     return;
+  //   }
+
+  //   if (!amount || amount <= 0 || amount > row.txnAmount) {
+  //     alert("Invalid refund amount.");
+  //     return;
+  //   }
+
+  //   const ok = window.confirm(`Send PayU link for ${amount} on card ${row.cardMasked}?`);
+  //   if (!ok) return;
+
+  //   this.setState((prev) => ({
+  //     currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: true } : r))
+  //   }));
+
+  //   try {
+  //     // SAME PayU API
+  //     await this.callPayURefundApi(row.cardExId, amount);
+
+  //     const status = amount === row.txnAmount ? TransactionStatus.FullRefundCompleted : TransactionStatus.PartialRefundCompleted;
+
+  //     const comment = amount === row.txnAmount ? "Full refund by Cards Ops" : `Partial refund (${amount}) by Cards Ops`;
+
+  //     await this.spSvc.updateTransactionStatus(row.id, status, comment, amount);
+
+  //     // const rows = await this.spSvc.getByCaseId(this.state.currentCaseId!);
+  //     // const caseStatus = calculateCaseStatusFromTransactions(rows);
+
+  //     // await this.caseSvc.updateCaseStatus(this.state.caseItemId!, caseStatus, "Refund processed by Cards Ops");
+
+  //     // this.setState({
+  //     //   currentCaseRows: rows,
+  //     //   caseStatus
+  //     // });
+
+  //     this.setState((prev) => ({
+  //       currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundInProgress: true } : r))
+  //     }));
+  //   } catch (e) {
+  //     alert("Failed to send PayU link.");
+  //     this.setState((prev) => ({
+  //       currentCaseRows: prev.currentCaseRows.map((r) => (r.id === row.id ? { ...r, refundAmount: undefined } : r))
+  //     }));
+  //   }
+  // };
+
+  private canAgentDoFullRefund(row: IExistingDisputeRow): boolean {
+    return (
+      row.disputeReason === "FRAUD" &&
+      !!row.cardExId &&
+      !this.state.isCaseLocked &&
+      this.state.view !== "openCase" &&
+      row.status !== TransactionStatus.RefundInitiated &&
+      row.status !== TransactionStatus.FullRefundCompleted
+    );
+  }
+
+  private canCardOpsDoFullRefund(row: IExistingDisputeRow): boolean {
+    return (
+      // row.disputeReason === "FRAUD" &&
+      !!row.cardExId &&
+      this.state.view === "openCase" &&
+      this.state.isCaseLocked &&
+      this.isCaseWithCardOps() &&
+      row.status !== TransactionStatus.FullRefundCompleted &&
+      // row.status !== TransactionStatus.PartialRefundCompleted &&
+      row.status !== TransactionStatus.RefundInitiated
+    );
+  }
+
+  private canCardOpsDoPartialRefund(row: IExistingDisputeRow): boolean {
+    return (
+      // row.disputeReason === "FRAUD" &&
+      !!row.cardExId &&
+      this.state.view === "openCase" &&
+      this.state.isCaseLocked &&
+      this.isCaseWithCardOps() &&
+      row.txnAmount > 0 &&
+      row.status !== TransactionStatus.FullRefundCompleted &&
+      row.status !== TransactionStatus.PartialRefundCompleted &&
+      row.status !== TransactionStatus.RefundInitiated
+    );
+  }
+
+  private getCaseBadgeText(): string {
+    const s = this.state.caseStatus;
+
+    if (!s || s === "Draft" || s === "New") return "Draft";
+    if (s === "Submitted") return "Submitted";
+    if (s === "Pending With Card Operation" || s === "Hold By Card Operation" || s === "Pending With Outbound") return "In Progress";
+
+    return s;
+  }
+
+  private getCaseBadgeColor(): string {
+    const text = this.getCaseBadgeText();
+
+    switch (text) {
+      case "Draft":
+        return "#9ca3af";
+      case "Submitted":
+        return "#2563eb";
+      case "In Progress":
+        return "#f59e0b";
+      case "Rejected":
+        return "#dc2626";
+      case "Closed":
+        return "#16a34a";
+      default:
+        return "#6b7280";
+    }
+  }
+
+  // private callPayURefundApi = async (cardExid: string, refundAmount: number): Promise<void> => {
+  //   const userId = getCleanUserId(this.props.context.pageContext.user.loginName);
+
+  //   // Change this api Once you get correct once
+  //   await apiPost(`${this.props.apiBaseUrl.replace(/\/$/, "")}/api/floward/refund`, {
+  //     cardExid,
+  //     userId,
+  //     refundAmount
+  //   });
+  // };
+
+  private isDraftCase(): boolean {
+    const s = this.state.caseStatus;
+    return !s || s === "Draft" || s === "New";
+  }
+
+  private isWorkflowstarted(): boolean {
+    return !!this.state.caseStatus && !this.isDraftCase();
+  }
+
+  private canDeleteTransaction(): boolean {
+    return this.isDraftCase() && !this.state.isCaseLocked;
+  }
+
+  private removeSavedTransaction = async (row: IExistingDisputeRow): Promise<void> => {
+    if (this.isWorkflowstarted()) {
+      alert("Cannot delete transactions after submission.");
+      return;
+    }
+
+    const ok = window.confirm("Delete this transaction from draft case?");
+    if (!ok) return;
+
+    await this.spSvc.deleteDisputeItem(row.id);
+
+    this.setState((prev) => ({
+      currentCaseRows: prev.currentCaseRows.filter((r) => r.id !== row.id)
+    }));
+  };
+
+  private deleteDraftCase = async (): Promise<void> => {
+    if (!this.isDraftCase()) {
+      alert("Only draft cases can be deleted.");
+      return;
+    }
+
+    const ok = window.confirm("This will permanently delete the draft case and all its transactions.\n\nDo you want to continue?");
+
+    if (!ok) return;
+
+    try {
+      const caseId = this.state.currentCaseId!;
+      const caseItemId = this.state.caseItemId!;
+
+      const rows = await this.spSvc.getByCaseId(caseId);
+      for (const r of rows) {
+        await this.spSvc.deleteDisputeItem(r.id);
+      }
+
+      await this.caseSvc.deleteCase(caseItemId);
+
+      this.setState({
+        view: "dashboard",
+        customer: undefined,
+        cards: undefined,
+        transactions: [],
+        currentCaseRows: [],
+        previousCaseRows: [],
+        caseItemId: undefined,
+        currentCaseId: undefined,
+        caseStatus: undefined,
+        isCaseLocked: false,
+        isNewCase: false,
+        status: "idle",
+        message: "Draft case deleted successfully."
+      });
+    } catch (e) {
+      alert("Failed to delete draft case.");
+    }
+  };
+
+  private isPaciApproved(): boolean {
+    return this.state.status === "approved" && !!this.state.requestId;
+  }
+}
+const th: React.CSSProperties = { borderBottom: "1px solid #ddd", textAlign: "left", padding: 6 };
+const td: React.CSSProperties = { borderBottom: "1px solid #f0f0f0", padding: 6, verticalAlign: "top" };
+const cardStyle: React.CSSProperties = {
+  background: "#ffffff",
+  border: "1px solid #e5e7eb",
+  borderRadius: 8,
+  padding: 16,
+  marginTop: 12
+};
+const primaryBtn: React.CSSProperties = {
+  padding: "8px 16px",
+  background: "#2563eb",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  fontWeight: 600
+};
+const dangerBtn: React.CSSProperties = {
+  padding: "6px 14px",
+  background: "#dc2626",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  fontWeight: 600
+};
