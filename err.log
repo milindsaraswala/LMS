@@ -1001,15 +1001,15 @@ export default class FlowardClaim extends React.Component<IProps, IState> {
 
           this.setState({
             status: "approved",
-            // isNewCase: true,
-            // currentCaseId: this.state.currentCaseId || this.generateCaseId(),
+            isNewCase: true,
+            currentCaseId: this.state.currentCaseId || this.generateCaseId(),
             paci: {
               requestId: s.RequestId,
               approvedOn: new Date().toISOString()
             },
             // requestId: s.RequestId,
-            // resultCode: rc,
-            // resultDescription: desc,
+            resultCode: rc,
+            resultDescription: desc,
             message: desc || "Authenticated"
           });
           return;
