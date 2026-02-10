@@ -1,0 +1,47 @@
+private getCaseCardNo(): string | null {
+  var rows = this.state.currentCaseRows || this.state.transactions;
+
+  if (!rows || rows.length === 0) {
+    return null;
+  }
+
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].cardNo) {
+      return rows[i].cardNo;
+    }
+  }
+
+  return null;
+}
+
+<select
+  value={t.cardNo || ""}
+  onChange={(e) => {
+    var selectedCardNo = (e.target as HTMLSelectElement).value;
+    var caseCardNo = this.getCaseCardNo();
+
+    if (caseCardNo && caseCardNo !== selectedCardNo) {
+      alert("You can add transactions for only ONE card in a case.");
+      return;
+    }
+
+    this.updateTransaction(t.localId, { cardNo: selectedCardNo });
+  }}
+  style={{ padding: 8, width: "100%" }}
+>
+
+{cards.map((c) => {
+  var caseCardNo = this.getCaseCardNo();
+  var disabled = caseCardNo && caseCardNo !== c.cardNo;
+
+  return (
+    <option key={c.cardNo} value={c.cardNo} disabled={disabled}>
+      {c.maskedCardNo} {disabled ? "(Different card not allowed)" : ""}
+    </option>
+  );
+})}
+
+var caseCardNo = this.getCaseCardNo();
+if (caseCardNo && t.cardNo !== caseCardNo) {
+  return "All transactions in a case must be for the same card.";
+}
