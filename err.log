@@ -1,0 +1,85 @@
+import * as React from "react";
+import NintexWorkflowService from "../../common/NintexWorkflowService";
+import { ICaseActionHistory } from "../../models/ICaseActionHistory";
+
+export interface IProps {
+  nintexSvc: NintexWorkflowService;
+  caseItemId: number;
+}
+
+export interface IState {
+  items: ICaseActionHistory[];
+  loading: boolean;
+}
+
+export default class CaseActionHistoryPanel extends React.Component<IProps, IState> {
+  public state: IState = {
+    items: [],
+    loading: true
+  };
+
+  public async componentDidMount() {
+    await this.load();
+  }
+
+  public async componentDidUpdate(prev: IProps) {
+    if (prev.caseItemId !== this.props.caseItemId) {
+      await this.load();
+    }
+  }
+
+  public render() {
+    const { items, loading } = this.state;
+
+    return (
+      <div style={{ marginTop: 24 }}>
+        <h4>Task Action History</h4>
+
+        {loading && <div>Loading history...</div>}
+
+        {!loading && items.length === 0 && <div style={{ color: "#777" }}>No actions recorded yet.</div>}
+
+        {!loading &&
+          items.map((h) => (
+            <div
+              key={h.Id}
+              style={{
+                padding: 10,
+                marginBottom: 8,
+                borderLeft: "4px solid #0078d4",
+                background: "#f8f9fb"
+              }}>
+              <div style={{ fontWeight: 600 }}>{h.action}</div>
+
+              <div style={{ fontSize: 12, color: "#555" }}>
+                {this.formatDate(h.actionDate)} · {h.actionBy}
+              </div>
+
+              {h.taskName && <div style={{ fontSize: 12, color: "#777" }}>Task: {h.taskName}</div>}
+
+              {h.comment && <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{h.comment}</div>}
+            </div>
+          ))}
+      </div>
+    );
+  }
+
+  private formatDate(d?: string): string {
+    if (!d) {
+      return "";
+    }
+    return new Date(d).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  private async load() {
+    this.setState({ loading: true });
+    const items = await this.props.nintexSvc.getCaseActionHistory(this.props.caseItemId);
+    this.setState({ items, loading: false });
+  }
+}
