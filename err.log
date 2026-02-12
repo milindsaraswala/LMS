@@ -1,0 +1,26 @@
+<div style={{ marginTop: 10 }}>
+  <div><b>Attachment (Optional)</b></div>
+  <input
+    type="file"
+    multiple
+    onChange={(e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (!files) return;
+
+      const arr: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        arr.push(files[i]);
+      }
+
+      this.setState({ attachments: arr });
+    }}
+  />
+
+  {this.state.attachments.length > 0 && (
+    <div style={{ marginTop: 6, fontSize: 12 }}>
+      {this.state.attachments.map((f, i) => (
+        <div key={i}>📎 {f.name}</div>
+      ))}
+    </div>
+  )}
+</div>
