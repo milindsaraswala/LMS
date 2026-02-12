@@ -1,0 +1,73 @@
+items.map((h) => (
+  <div
+    key={h.Id}
+    style={{
+      padding: 10,
+      marginBottom: 8,
+      borderLeft: "4px solid #0078d4",
+      background: "#f8f9fb",
+      position: "relative"   // important for popup positioning
+    }}
+  >
+    <div style={{ fontWeight: 600 }}>{h.action}</div>
+
+    <div style={{ fontSize: 12, color: "#555" }}>
+      {this.formatDate(h.actionDate)} · {h.actionBy}
+    </div>
+
+    {h.taskName && (
+      <div style={{ fontSize: 12, color: "#777" }}>
+        Task: {h.taskName}
+      </div>
+    )}
+
+    {h.comment && (
+      <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+        {h.comment}
+      </div>
+    )}
+
+    {/* 🔵 ATTACHMENT ICON */}
+    {h.AttachmentFiles && h.AttachmentFiles.length > 0 && (
+      <div style={{ marginTop: 8 }}>
+        <span
+          style={{
+            cursor: "pointer",
+            fontWeight: 600
+          }}
+          onClick={() => this.toggleAttachmentMenu(h.Id)}
+        >
+          📎 {h.AttachmentFiles.length}
+        </span>
+
+        {/* 🔵 POPUP MENU */}
+        {this.state.openAttachmentMenuId === h.Id && (
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              background: "#fff",
+              border: "1px solid #ddd",
+              padding: 8,
+              zIndex: 100,
+              boxShadow: "0 2px 6px rgba(0,0,0,0.2)"
+            }}
+          >
+            {h.AttachmentFiles.map(a => (
+              <div key={a.FileName} style={{ marginBottom: 4 }}>
+                <a
+                  href={a.ServerRelativeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {a.FileName}
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+))
