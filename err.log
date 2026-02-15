@@ -1,0 +1,852 @@
+/// <reference path="../../../node_modules/@types/devextreme/dx.all.d.ts"/>
+import { SPComponentLoader } from "@microsoft/sp-loader";
+import {
+  BaseClientSideWebPart,
+  IPropertyPaneConfiguration,
+  PropertyPaneTextField,
+} from "@microsoft/sp-webpart-base";
+import { sp } from "@pnp/sp/presets/all";
+import * as strings from "BbynAcademyWebPartStrings";
+import * as $ from "jquery";
+import * as component from "../../components";
+import styles from "./BbynAcademyWebPart.module.scss";
+require("../../assets/style.css");
+
+export interface IBbynAcademyWebPartProps {
+  description: string;
+}
+
+export default class BbynAcademyWebPart extends BaseClientSideWebPart<IBbynAcademyWebPartProps> {
+  public async onInit(): Promise<void> {
+    await super.onInit();
+    SPComponentLoader.loadCss("/CDN/devExtreme/21.2.13/css/dx.light.css");
+    SPComponentLoader.loadCss("/CDN/HubDesignAssests/HubStyle.css");
+    sp.setup({
+      spfxContext: this.context,
+    });
+  }
+  public async render(): Promise<void> {
+    const e = $(".CanvasSection");
+    e[0].classList.remove("CanvasSection-xl4");
+    e[1].classList.remove("CanvasSection-xl8");
+    const context = this.context;
+
+    const filterValues = [
+      "All",
+      "Communication Skills",
+      "Compliance and Legislation",
+      "Core Job Skills",
+      "Information Technology",
+      "Management and Leadership",
+      "Other",
+      "Sales and Service",
+      "School of Management and Leadership",
+      "School of Technology",
+      "School of Technical Banking",
+      "School of Wealth Management",
+      "School of Consumer Banking",
+      "Technical Financial",
+    ];
+
+    const currentPage = await sp.web.lists
+      .getById(context.pageContext.list.id.toString())
+      .items.getById(context.pageContext.listItem.id)
+      .get();
+    this.domElement.innerHTML = `
+		<h1 id="mainTitle">
+				<i id="mainTitleIcon" class="bi bi-grid"></i>${currentPage.Title}</h1>
+		<div class="${styles.bbynAcademy}">
+			<div id="trainingcontainer">
+				<div id="upcomingTrainingGrid"></div>
+				<div id="tabs"></div>
+				<div id="ApplyNowContainer"></div>
+				</div>
+			</div>
+			<div id="applyNowcontainer" class="${styles.applyNowcontainer}">
+			</div>
+		</div>`;
+    $(() => {
+      let defaultFilterValue = "All";
+      if (localStorage.cat !== undefined) {
+        defaultFilterValue = localStorage.cat;
+      }
+      const trainingListTemplate = (itemData, itemIndex, element) => {
+        return $(`<div id="trainingListContainer"/>`).dxDataGrid({
+          dataSource: this.getCoursesItems(),
+          paging: {
+            pageSize: 15,
+          },
+          pager: {
+            displayMode: "full",
+          },
+          scrolling: {
+            showScrollbar: "always",
+          },
+          searchPanel: {
+            visible: true,
+          },
+          headerFilter: {
+            visible: true,
+          },
+          filterRow: {
+            visible: true,
+            applyFilter: "auto",
+          },
+          showBorders: false,
+          showColumnHeaders: true,
+          showColumnLines: false,
+          showRowLines: false,
+          allowColumnResizing: true,
+          columnResizingMode: "widget",
+          toolbar: {
+            items: [
+              {
+                location: "after",
+                name: "categoryFilter",
+                template() {
+                  return $("<div/>").dxSelectBox({
+                    dataSource: filterValues,
+                    value: defaultFilterValue,
+                    inputAttr: { "aria-label": "Category" },
+                    width: "auto",
+                    elementAttr: {
+                      id: "selectBoxCategory",
+                    },
+                    onValueChanged(data) {
+                      if (data.value === "All") {
+                        $("#trainingListContainer")
+                          .dxDataGrid("instance")
+                          .clearFilter();
+                      } else {
+                        $("#trainingListContainer")
+                          .dxDataGrid("instance")
+                          .filter(["trainingCategory", "=", data.value]);
+                      }
+                    },
+                  });
+                },
+              },
+              "searchPanel",
+            ],
+          },
+          onToolbarPreparing(barItems) {
+            const toolbarItems = barItems.toolbarOptions.items;
+            toolbarItems.forEach((item) => {
+              if (item.name === "searchPanel") {
+                item.location = "before";
+              }
+            });
+          },
+          wordWrapEnabled: true,
+          columnAutoWidth: true,
+          columns: [
+            {
+              dataField: "programName",
+              name: "programName",
+              caption: "Program Name",
+              width: 200,
+              fixed: true,
+              fixedPosition: "left",
+              cellTemplate(container, options) {
+                $("<a>")
+                  .text(options.value)
+                  .attr({
+                    class: "programName",
+                    title: options.value,
+                  })
+                  .on("click", async () => {
+                    $("#trainingcontainer").hide();
+
+                    const result = await getTrainingByprogramID(
+                      context,
+                      options.data.programId
+                    );
+                    $("#applyNowcontainer").html(
+                      component.applyNow(
+                        result.trainingList[0],
+                        "",
+                        context,
+                        options.data.instructorName
+                      )
+                    );
+                    // $("#learningList").hide();
+                    // $("#learningList1").hide();
+                    // $("#learningListTime").hide();
+                    // $("#learningListTime1").hide();
+                  })
+                  .appendTo(container);
+              },
+            },
+            {
+              dataField: "trainingCategory",
+              width: 200,
+            },
+            {
+              dataField: "startDate",
+              caption: "Start Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 150,
+            },
+            {
+              dataField: "endDate",
+              caption: "End Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 150,
+            },
+            {
+              dataField: "regCloseDate",
+              caption: "Registration Close Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 250,
+            },
+            {
+              dataField: "totalDays",
+              caption: "Days",
+              alignment: "center",
+              width: 100,
+            },
+            {
+              caption: "Start Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue(rowData) {
+                return new Date(rowData.startDate).toLocaleTimeString();
+              },
+              width: 150,
+            },
+            {
+              caption: "End Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue(rowData) {
+                return new Date(rowData.endDate).toLocaleTimeString();
+              },
+              width: 150,
+            },
+            {
+              dataField: "venue",
+              caption: "Venue",
+              width: 100,
+            },
+            {
+              dataField: "schoolName",
+              caption: "Vendor",
+              width: 150,
+            },
+            {
+              dataField: "regStatus",
+              caption: "Program Status",
+              name: "Status",
+              width: 100,
+            },
+            {
+              type: "buttons",
+              name: "Apply",
+              width: 130,
+              fixed: true,
+              fixedPosition: "right",
+              cellTemplate(container, option) {
+                $(`<div id="danger"/>`)
+                  .dxButton({
+                    stylingMode: "contained",
+                    text: "Apply now",
+                    type: "danger",
+                    elementAttr: {
+                      class: "applyBtn",
+                    },
+
+                    width: 120,
+                    onClick: async () => {
+                      $("#trainingcontainer").hide();
+                      const result = await getTrainingByprogramID(
+                        context,
+                        option.data.programId
+                      );
+                      $("#applyNowcontainer").append(
+                        component.applyNow(
+                          result.trainingList[0],
+                          "",
+                          context,
+                          option.data.instructorName
+                        )
+                      );
+                      // $("#learningList").hide();
+                      // $("#learningList1").hide();
+                      // $("#learningListTime").hide();
+                      // $("#learningListTime1").hide();
+                    },
+                  })
+                  .appendTo(container);
+              },
+            },
+          ],
+        });
+      };
+      window.setTimeout(() => {
+        if (defaultFilterValue !== "All") {
+          $("#trainingListContainer")
+            .dxDataGrid("instance")
+            .filter(["trainingCategory", "=", defaultFilterValue]);
+        }
+      }, 1000);
+      const learningListTemplate = (
+        itemData: any,
+        itemIndex: any,
+        element: any
+      ) => {
+        return $(`<div id="learningListContainer"/>`).dxDataGrid({
+          dataSource: this.getCoursesItems(),
+          onToolbarPreparing(barItems) {
+            const toolbarItems = barItems.toolbarOptions.items;
+            toolbarItems.forEach((item) => {
+              if (item.name === "searchPanel") {
+                item.location = "before";
+              }
+            });
+          },
+          paging: {
+            pageSize: 15,
+          },
+          pager: {
+            displayMode: "full",
+          },
+          scrolling: {
+            showScrollbar: "always",
+          },
+          searchPanel: {
+            visible: true,
+          },
+          headerFilter: {
+            visible: true,
+          },
+          filterRow: {
+            visible: true,
+            applyFilter: "auto",
+          },
+          showBorders: false,
+          showColumnHeaders: true,
+          showColumnLines: false,
+          showRowLines: false,
+          allowColumnResizing: true,
+          columnAutoWidth: true,
+          columnResizingMode: "widget",
+          columns: [
+            {
+              dataField: "programName",
+              name: "programName",
+              caption: "Program Name",
+              fixed: true,
+              fixedPosition: "left",
+              cellTemplate: (container, options) => {
+                $("<a>")
+                  .text(options.value)
+                  .attr({
+                    class: "programName",
+                    title: options.value,
+                  })
+                  .on("click", async () => {
+                    $("#trainingcontainer").hide();
+                    const result = await getHistoryCourse(
+                      context,
+                      options.data.programId
+                    );
+                    $("#applyNowcontainer")
+                      .show()
+                      .append(
+                        component.applyNow(
+                          result,
+                          "learningList",
+                          context,
+                          options.data.trainerName
+                        )
+                      );
+                    // $("#trainingList").hide();
+                    // $("#trainingList1").hide();
+                    // $("#trainingListTime").hide();
+                    // $("#trainingListTime1").hide();
+                  })
+                  .appendTo(container);
+              },
+            },
+            {
+              dataField: "programStartDate",
+              caption: "Start date",
+              dataType: "date",
+              sortOrder: "desc",
+              // format: "dd-MMM-yyyy",
+            },
+            {
+              dataField: "programEndDate",
+              caption: "End date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+            },
+            {
+              dataField: "totalDays",
+              caption: "Days",
+              dataType: "number",
+              alignment: "center",
+            },
+            {
+              caption: "Start Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue: (rowData) => {
+                return new Date(rowData.programStartDate).toLocaleTimeString(
+                  "en-US"
+                );
+              },
+            },
+            {
+              caption: "End Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue: (rowData) => {
+                return new Date(rowData.programEndDate).toLocaleTimeString(
+                  "en-US"
+                );
+              },
+            },
+            {
+              dataField: "venue",
+              caption: "Venue",
+            },
+            {
+              dataField: "vendorName",
+            },
+            {
+              dataField: "status",
+              caption: "Status",
+              name: "Status",
+            },
+          ],
+        });
+      };
+      $("#tabs").dxTabPanel({
+        animationEnabled: true,
+        loop: true,
+        selectedIndex: 0,
+        itemTitleTemplate: "title",
+        items: [
+          { title: "Upcoming Training", template: trainingListTemplate },
+          { title: "Your Courses", template: learningListTemplate },
+        ],
+        onSelectionChanged: () => {
+          $("#learningListContainer").dxDataGrid("instance").refresh(true);
+          $("#trainingListContainer").dxDataGrid("instance").refresh(true);
+        },
+      });
+    });
+  }
+  protected getPropertyPaneConfiguration(): IPropertyPaneConfiguration {
+    return {
+      pages: [
+        {
+          header: {
+            description: strings.PropertyPaneDescription,
+          },
+          groups: [
+            {
+              groupName: strings.BasicGroupName,
+              groupFields: [
+                PropertyPaneTextField("description", {
+                  label: strings.DescriptionFieldLabel,
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  private getCoursesItems = () => {
+    return new DevExpress.data.CustomStore({
+      loadMode: "raw",
+      load: async () => {
+        const selectedIndex: any = $("#tabs")
+          .dxTabPanel("instance")
+          .option("selectedIndex");
+        return await this.getData(selectedIndex);
+        // return [];
+      },
+    });
+  }
+
+  private getData = async (selectedTab) => {
+    let userId =
+      this.context.pageContext.legacyPageContext.userLoginName.replace(
+        `${process.env.BBYN_DOMAIN}\\`,
+        ""
+      );
+    if (userId.includes("U")) {
+      userId = userId.substring(0, userId.length - 1);
+    }
+    userId = parseInt(userId, 10);
+    // userId = 2460;
+
+    const settingsLearningHistory: any = {
+      url: `${process.env.BBYN_WEBAPI}/api/rest/GetLearningHistory/${userId}`,
+      method: "GET",
+      timeout: 0,
+    };
+    const resultLearningHistory: any = await $.ajax(settingsLearningHistory);
+    const learningList = resultLearningHistory.learningList
+      ? resultLearningHistory.learningList
+      : [];
+
+    const settingsTrainingCourseDetails: any = {
+      url: `${process.env.BBYN_WEBAPI}/api/rest/GetTrainingCourseDetails/${userId}`,
+      method: "GET",
+      timeout: 0,
+    };
+    const resultTrainingCourseDetails: any = await $.ajax(
+      settingsTrainingCourseDetails
+    );
+    let trainingList = resultTrainingCourseDetails.trainingList
+      ? resultTrainingCourseDetails.trainingList
+      : [];
+
+    if (selectedTab === 1) {
+      // Registration History
+      return learningList;
+    } else {
+      // Training List
+      const uniqueLearningHistoryProgramId = [
+        ...new Set(learningList.map((item) => item.programId)),
+      ];
+      if (uniqueLearningHistoryProgramId.length > 0) {
+        trainingList = trainingList.filter(
+          (program) =>
+            !uniqueLearningHistoryProgramId.includes(program.programId)
+        );
+      }
+      return trainingList;
+    }
+  }
+}
+
+const getTrainingByprogramID = async (context, programId) => {
+  let userId = context.pageContext.legacyPageContext.userLoginName.replace(
+    `${process.env.BBYN_DOMAIN}\\`,
+    ""
+  );
+  if (userId.includes("U")) {
+    userId = userId.substring(0, userId.length - 1);
+  }
+  userId = parseInt(userId, 10);
+  const settings: any = {
+    url: `${process.env.BBYN_WEBAPI}/api/rest/GetTrainingCourseDetails/${userId}/${programId}`,
+    method: "GET",
+    timeout: 0,
+  };
+  const results: any = await $.ajax(settings);
+
+  console.log(results);
+
+  return results;
+};
+
+const getHistoryCourse = async (context, programId) => {
+  let userId = context.pageContext.legacyPageContext.userLoginName.replace(
+    `${process.env.BBYN_DOMAIN}\\`,
+    ""
+  );
+  if (userId.includes("U")) {
+    userId = userId.substring(0, userId.length - 1);
+  }
+  userId = parseInt(userId, 10);
+  const settings: any = {
+    url: `${process.env.BBYN_WEBAPI}/api/rest/GetLearningHistory/${userId}`,
+    method: "GET",
+    timeout: 0,
+  };
+  const results: any = await $.ajax(settings);
+  if (results && results.learningList && results.learningList.length > 0) {
+    const coursesFound = results.learningList.filter(
+      (r) => r.programId === programId
+    );
+    if (coursesFound.length > 0) {
+      const course = coursesFound[0];
+      return {
+        venue: course.venue,
+        instructorName: course.instructorName,
+        programName: course.programName,
+        startDate: course.programStartDate,
+        endDate: course.programEndDate,
+        totalDays: course.totalDays,
+        description: course.description,
+        attachments: [],
+      };
+    } else {
+      return {
+        venue: "Not Available",
+        instructorName: "Not Available",
+        programName: "Not Available",
+        startDate: new Date(1900, 1, 1),
+        endDate: new Date(1900, 1, 1),
+        totalDays: "Not Available",
+        description: "Not Available",
+        attachments: [],
+      };
+    }
+  }
+  return {
+    venue: "Not Available",
+    instructorName: "Not Available",
+    programName: "Not Available",
+    startDate: new Date(1900, 1, 1),
+    endDate: new Date(1900, 1, 1),
+    totalDays: "Not Available",
+    description: "Not Available",
+    attachments: [],
+  };
+};
+
+
+
+========================================================================
+/// <reference path="../../node_modules/@types/devextreme/dx.all.d.ts" />
+import { WebPartContext } from "@microsoft/sp-webpart-base";
+import { sp } from "@pnp/sp/presets/all";
+import "devextreme";
+
+export const applyNow = (
+  item: any,
+  list: string,
+  context: WebPartContext,
+  instructorName: string
+) => {
+  const html = `
+		<div class="itemDeatils">
+			<a class="back" href="#">&nbsp; Back</a>
+			<div class="courseContainer">
+				<h1>${item.programName}</h1>
+				<div class="instructor">
+					Instructor name/s
+				</div>
+				<div class="instructorText">${instructorName}</div>
+				<div class="tableCourse">
+					<table>
+						<tr>
+							<td class="instructor">Start date</td>
+							<td class="instructor">End date</td>
+							<td class="instructor">Total training days</td>
+							<td class="instructor">Start time</td>
+							<td class="instructor">End time</td>
+							<td class="instructor">Venue</td>
+						</tr>
+						<tr>
+							<td>
+								${new Date(item.startDate).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
+							</td>
+							<td>
+								${new Date(item.endDate).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
+							</td>
+							<td>
+								${item.totalDays}
+							</td>
+							<td>
+								${new Date(item.startDate).toLocaleTimeString()}
+							</td>
+							<td>
+								${new Date(item.endDate).toLocaleTimeString()}
+							</td>
+							<td>
+								${item.venue}
+							</td>
+						</tr>
+					</table>
+				</div>
+				<div class="instructor">Course Details</div>
+				<div class="details" > ${item.description} </div>
+				<div id="agendaTitle" class= "instructor" > Daily agenda </div>
+				<div id="agenda"></div>
+        <div style="display:flex">
+          <div id="applyButton" class= "applyButton me-2"></div>
+          <div id="viewAttachmentButton" class= "applyButton"></div>
+        </div>
+			</div>
+		</div>`;
+  window.setTimeout(() => {
+    $("#applyButton").dxButton({
+      stylingMode: "contained",
+      text: "Apply Now",
+      type: "danger",
+      // width: 150,
+      height: 35,
+      elementAttr: { class: "applyBtn" },
+      onContentReady(e) {
+        if (list === "learningList") {
+          $("#applyButton").dxButton("instance").option("visible", false);
+        } else {
+          $("#applyButton").dxButton("instance").option("visible", true);
+        }
+      },
+      async onClick() {
+        let userId =
+          context.pageContext.legacyPageContext.userLoginName.replace(
+            `${process.env.BBYN_DOMAIN}\\`,
+            ""
+          );
+        if (userId.includes("U")) {
+          userId = userId.substring(0, userId.length - 1);
+        }
+        userId = parseInt(userId, 10);
+        // let programId = 118944;
+        // userId = 2460;
+        const newItem: {
+          Staff_x0020_ID: string;
+          Program_x0020_name: string;
+          Program_x0020_ID: string;
+          Program_x0020_details: string;
+          Start: Date;
+          End: Date;
+          Total_x0020_training_x0020_days: number;
+          Venue: string;
+          Instructor_x0020_name: string;
+          School_x0020_name: string;
+          Status: string;
+        } = {
+          Staff_x0020_ID: "",
+          Program_x0020_name: "",
+          Program_x0020_ID: "",
+          Program_x0020_details: "",
+          Start: new Date(),
+          End: new Date(),
+          Total_x0020_training_x0020_days: 0,
+          Venue: "",
+          Instructor_x0020_name: "",
+          School_x0020_name: "",
+          Status: "",
+        };
+        // newItem.status = "Pending";
+        newItem.Staff_x0020_ID = userId.toString();
+        newItem.Program_x0020_name = item.programName;
+        newItem.Program_x0020_ID = item.programId.toString();
+        newItem.Program_x0020_details = item.description;
+        newItem.Start = item.startDate;
+        newItem.End = item.endDate;
+        newItem.Total_x0020_training_x0020_days = item.totalDays;
+        newItem.Venue = item.venue;
+        newItem.Instructor_x0020_name = item.instructorName;
+        newItem.School_x0020_name = item.schoolName;
+        newItem.Status = item.regStatus;
+        await sp.web.lists
+          .getByTitle("Employees Training Courses")
+          .items.add(newItem);
+
+        // Registering Course
+        userId = parseInt(userId, 10);
+        const registrationSettings: any = {
+          url: `${process.env.BBYN_WEBAPI}/api/rest/RegisterTrainingCourse/${userId}/${item.programId}`,
+          method: "POST",
+          timeout: 0,
+        };
+        const registrationResult: any = await $.ajax(registrationSettings);
+
+        let messageHtml = "";
+        if (registrationResult.returnCode === "0") {
+          messageHtml = `<i style="font-weight:700;">Your training request has been submitted successfully for ${item.programName}</i>`; // registrationResult.returnMsg;
+        } else {
+          messageHtml = `<div style="font-weight:700;">There was an error, kindly contact Tawasol Team</div>`;
+        }
+        const dialog = DevExpress.ui.dialog.custom({
+          title: "Notification",
+          messageHtml: messageHtml,
+          buttons: [
+            {
+              text: "Ok",
+              onClick: (e) => {
+                $("#trainingcontainer").show();
+                $("#applyNowcontainer").empty();
+                $("#trainingListContainer")
+                  .dxDataGrid("instance")
+                  .refresh(true);
+              },
+            },
+          ],
+        });
+        dialog.show();
+      },
+    });
+    $("#viewAttachmentButton").dxButton({
+      stylingMode: "contained",
+      text: "View Program Brochure",
+      type: "danger",
+      visible: item.attachments.length > 0,
+      // width: 200,
+      height: 35,
+      elementAttr: { class: "applyBtn alignRight" },
+      onContentReady(e) {
+        if (list === "learningList") {
+          $("#applyButton").dxButton("instance").option("visible", false);
+        } else {
+          $("#applyButton").dxButton("instance").option("visible", true);
+        }
+      },
+      async onClick() {
+        if (item.attachments && item.attachments.length > 0) {
+          // Convert Blob from attachment content Base64 String
+          const attachments = item.attachments[0];
+          const bolb = b64toBlob(
+            attachments.fileContent,
+            attachments.fileContentType
+          );
+
+          // Create an object URL from the Blob
+          const url = URL.createObjectURL(bolb);
+
+          // Open the URL in a new tab
+          window.open(url);
+
+          // Optionally, revoke the object URL after it's opened to free up memory
+          URL.revokeObjectURL(url);
+        } else {
+          alert("No training documents available.");
+        }
+      },
+    });
+    $(document).on("click", "a.back", () => {
+      $("#trainingcontainer").show();
+      $("#applyNowcontainer").empty();
+    });
+  }, 1000);
+
+  return html;
+};
+
+const b64toBlob = (b64Data, contentType = "", sliceSize = 512) => {
+  const byteCharacters = atob(b64Data);
+  const byteArrays = [];
+
+  for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+    const slice = byteCharacters.slice(offset, offset + sliceSize);
+
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+
+    const byteArray = new Uint8Array(byteNumbers);
+    byteArrays.push(byteArray);
+  }
+
+  const blob = new Blob(byteArrays, { type: contentType });
+  return blob;
+};
