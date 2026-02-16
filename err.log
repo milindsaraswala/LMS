@@ -1,1 +1,637 @@
 
+/// <reference path="../../../node_modules/@types/devextreme/dx.all.d.ts"/>
+import { SPComponentLoader } from "@microsoft/sp-loader";
+import {
+  BaseClientSideWebPart,
+  IPropertyPaneConfiguration,
+  PropertyPaneTextField,
+} from "@microsoft/sp-webpart-base";
+import { sp } from "@pnp/sp/presets/all";
+import * as strings from "BbynAcademyWebPartStrings";
+import * as $ from "jquery";
+import * as component from "../../components";
+import styles from "./BbynAcademyWebPart.module.scss";
+require("../../assets/style.css");
+
+export interface IBbynAcademyWebPartProps {
+  description: string;
+}
+
+export default class BbynAcademyWebPart extends BaseClientSideWebPart<IBbynAcademyWebPartProps> {
+  public async onInit(): Promise<void> {
+    await super.onInit();
+    SPComponentLoader.loadCss("/CDN/devExtreme/21.2.13/css/dx.light.css");
+    SPComponentLoader.loadCss("/CDN/HubDesignAssests/HubStyle.css");
+    sp.setup({
+      spfxContext: this.context,
+    });
+  }
+  public async render(): Promise<void> {
+    const e = $(".CanvasSection");
+    if (e.length > 1) {
+      e[0].classList.remove("CanvasSection-xl4");
+      e[1].classList.remove("CanvasSection-xl8");
+    }
+    const context = this.context;
+
+    const filterValues = [
+      "All",
+      "Communication Skills",
+      "Compliance and Legislation",
+      "Core Job Skills",
+      "Information Technology",
+      "Management and Leadership",
+      "Other",
+      "Sales and Service",
+      "School of Management and Leadership",
+      "School of Technology",
+      "School of Technical Banking",
+      "School of Wealth Management",
+      "School of Consumer Banking",
+      "Technical Financial",
+    ];
+
+    const currentPage = await sp.web.lists
+      .getById(context.pageContext.list.id.toString())
+      .items.getById(context.pageContext.listItem.id)
+      .get();
+    this.domElement.innerHTML = `
+		<h1 id="mainTitle">
+				<i id="mainTitleIcon" class="bi bi-grid"></i>${currentPage.Title}</h1>
+		<div class="${styles.bbynAcademy}">
+			<div id="trainingcontainer">
+				<div id="upcomingTrainingGrid"></div>
+				<div id="tabs"></div>
+				<div id="ApplyNowContainer"></div>
+				</div>
+			</div>
+			<div id="applyNowcontainer" class="${styles.applyNowcontainer}">
+			</div>
+		</div>`;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const programIdFromUrl = urlParams.get("programId");
+    const tabFromUrl = urlParams.get("tab");
+
+    $(() => {
+      let defaultFilterValue = "All";
+      if (localStorage.cat !== undefined) {
+        defaultFilterValue = localStorage.cat;
+      }
+      const trainingListTemplate = (itemData, itemIndex, element) => {
+        return $(`<div id="trainingListContainer"/>`).dxDataGrid({
+          dataSource: this.getCoursesItems(),
+          paging: {
+            pageSize: 15,
+          },
+          pager: {
+            displayMode: "full",
+          },
+          scrolling: {
+            showScrollbar: "always",
+          },
+          searchPanel: {
+            visible: true,
+          },
+          headerFilter: {
+            visible: true,
+          },
+          filterRow: {
+            visible: true,
+            applyFilter: "auto",
+          },
+          showBorders: false,
+          showColumnHeaders: true,
+          showColumnLines: false,
+          showRowLines: false,
+          allowColumnResizing: true,
+          columnResizingMode: "widget",
+          toolbar: {
+            items: [
+              {
+                location: "after",
+                name: "categoryFilter",
+                template() {
+                  return $("<div/>").dxSelectBox({
+                    dataSource: filterValues,
+                    value: defaultFilterValue,
+                    inputAttr: { "aria-label": "Category" },
+                    width: "auto",
+                    elementAttr: {
+                      id: "selectBoxCategory",
+                    },
+                    onValueChanged(data) {
+                      if (data.value === "All") {
+                        $("#trainingListContainer")
+                          .dxDataGrid("instance")
+                          .clearFilter();
+                      } else {
+                        $("#trainingListContainer")
+                          .dxDataGrid("instance")
+                          .filter(["trainingCategory", "=", data.value]);
+                      }
+                    },
+                  });
+                },
+              },
+              "searchPanel",
+            ],
+          },
+          onToolbarPreparing(barItems) {
+            const toolbarItems = barItems.toolbarOptions.items;
+            toolbarItems.forEach((item) => {
+              if (item.name === "searchPanel") {
+                item.location = "before";
+              }
+            });
+          },
+          wordWrapEnabled: true,
+          columnAutoWidth: true,
+          columns: [
+            {
+              dataField: "programName",
+              name: "programName",
+              caption: "Program Name",
+              width: 200,
+              fixed: true,
+              fixedPosition: "left",
+              cellTemplate(container, options) {
+                $("<a>")
+                  .text(options.value)
+                  .attr({
+                    class: "programName",
+                    title: options.value,
+                    href: `?programId=${options.data.programId}&tab=training`
+                  })
+                  .appendTo(container);
+              },
+            },
+            {
+              dataField: "trainingCategory",
+              width: 200,
+            },
+            {
+              dataField: "startDate",
+              caption: "Start Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 150,
+            },
+            {
+              dataField: "endDate",
+              caption: "End Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 150,
+            },
+            {
+              dataField: "regCloseDate",
+              caption: "Registration Close Date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+              width: 250,
+            },
+            {
+              dataField: "totalDays",
+              caption: "Days",
+              alignment: "center",
+              width: 100,
+            },
+            {
+              caption: "Start Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue(rowData) {
+                return new Date(rowData.startDate).toLocaleTimeString();
+              },
+              width: 150,
+            },
+            {
+              caption: "End Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue(rowData) {
+                return new Date(rowData.endDate).toLocaleTimeString();
+              },
+              width: 150,
+            },
+            {
+              dataField: "venue",
+              caption: "Venue",
+              width: 100,
+            },
+            {
+              dataField: "schoolName",
+              caption: "Vendor",
+              width: 150,
+            },
+            {
+              dataField: "regStatus",
+              caption: "Program Status",
+              name: "Status",
+              width: 100,
+            },
+            {
+              type: "buttons",
+              name: "Apply",
+              width: 130,
+              fixed: true,
+              fixedPosition: "right",
+              cellTemplate(container, option) {
+                $(`<div id="danger"/>`)
+                  .dxButton({
+                    stylingMode: "contained",
+                    text: "Apply now",
+                    type: "danger",
+                    elementAttr: {
+                      class: "applyBtn",
+                    },
+
+                    width: 120,
+                    onClick: async () => {
+                      window.location.href =
+                        window.location.pathname +
+                        `?programId=${option.data.programId}&tab=training`;
+                      // $("#trainingcontainer").hide();
+                      // const result = await getTrainingByprogramID(
+                      //   context,
+                      //   option.data.programId
+                      // );
+                      // $("#applyNowcontainer").append(
+                      //   component.applyNow(
+                      //     result.trainingList[0],
+                      //     "",
+                      //     context,
+                      //     option.data.instructorName
+                      //   )
+                      // );
+                    },
+                  })
+                  .appendTo(container);
+              },
+            },
+          ],
+        });
+      };
+      window.setTimeout(() => {
+        if (defaultFilterValue !== "All") {
+          $("#trainingListContainer")
+            .dxDataGrid("instance")
+            .filter(["trainingCategory", "=", defaultFilterValue]);
+        }
+      }, 1000);
+      const learningListTemplate = (
+        itemData: any,
+        itemIndex: any,
+        element: any
+      ) => {
+        return $(`<div id="learningListContainer"/>`).dxDataGrid({
+          dataSource: this.getCoursesItems(),
+          onToolbarPreparing(barItems) {
+            const toolbarItems = barItems.toolbarOptions.items;
+            toolbarItems.forEach((item) => {
+              if (item.name === "searchPanel") {
+                item.location = "before";
+              }
+            });
+          },
+          paging: {
+            pageSize: 15,
+          },
+          pager: {
+            displayMode: "full",
+          },
+          scrolling: {
+            showScrollbar: "always",
+          },
+          searchPanel: {
+            visible: true,
+          },
+          headerFilter: {
+            visible: true,
+          },
+          filterRow: {
+            visible: true,
+            applyFilter: "auto",
+          },
+          showBorders: false,
+          showColumnHeaders: true,
+          showColumnLines: false,
+          showRowLines: false,
+          allowColumnResizing: true,
+          columnAutoWidth: true,
+          columnResizingMode: "widget",
+          columns: [
+            {
+              dataField: "programName",
+              name: "programName",
+              caption: "Program Name",
+              fixed: true,
+              fixedPosition: "left",
+              cellTemplate: (container, options) => {
+                $("<a>")
+                  .text(options.value)
+                  .attr({
+                    class: "programName",
+                    title: options.value,
+                  })
+                  .on("click", async () => {
+                    $("#trainingcontainer").hide();
+                    const result = await getHistoryCourse(
+                      context,
+                      options.data.programId
+                    );
+                    $("#applyNowcontainer")
+                      .show()
+                      .append(
+                        component.applyNow(
+                          result,
+                          "learningList",
+                          context,
+                          options.data.trainerName
+                        )
+                      );
+                    // $("#trainingList").hide();
+                    // $("#trainingList1").hide();
+                    // $("#trainingListTime").hide();
+                    // $("#trainingListTime1").hide();
+                  })
+                  .appendTo(container);
+              },
+            },
+            {
+              dataField: "programStartDate",
+              caption: "Start date",
+              dataType: "date",
+              sortOrder: "desc",
+              // format: "dd-MMM-yyyy",
+            },
+            {
+              dataField: "programEndDate",
+              caption: "End date",
+              dataType: "date",
+              format: "dd-MMM-yyyy",
+            },
+            {
+              dataField: "totalDays",
+              caption: "Days",
+              dataType: "number",
+              alignment: "center",
+            },
+            {
+              caption: "Start Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue: (rowData) => {
+                return new Date(rowData.programStartDate).toLocaleTimeString(
+                  "en-US"
+                );
+              },
+            },
+            {
+              caption: "End Time",
+              allowFiltering: true,
+              allowSorting: true,
+              allowSearch: true,
+              calculateCellValue: (rowData) => {
+                return new Date(rowData.programEndDate).toLocaleTimeString(
+                  "en-US"
+                );
+              },
+            },
+            {
+              dataField: "venue",
+              caption: "Venue",
+            },
+            {
+              dataField: "vendorName",
+            },
+            {
+              dataField: "status",
+              caption: "Status",
+              name: "Status",
+            },
+          ],
+        });
+      };
+
+      let selectedIndexFromUrl = 0;
+      if (tabFromUrl === "learning") {
+        selectedIndexFromUrl = 1;
+      }
+
+      $("#tabs").dxTabPanel({
+        animationEnabled: true,
+        loop: true,
+        selectedIndex: selectedIndexFromUrl,
+        itemTitleTemplate: "title",
+        items: [
+          { title: "Upcoming Training", template: trainingListTemplate },
+          { title: "Your Courses", template: learningListTemplate },
+        ],
+        onSelectionChanged: () => {
+          $("#learningListContainer").dxDataGrid("instance").refresh(true);
+          $("#trainingListContainer").dxDataGrid("instance").refresh(true);
+        },
+      });
+
+      if (programIdFromUrl) {
+        (async () => {
+          try {
+            $("#trainingcontainer").hide();
+
+            const result = await getTrainingByprogramID(
+              context,
+              parseInt(programIdFromUrl, 10)
+            );
+            if (result && result.trainingList && result.trainingList.length > 0) {
+              $("#applyNowcontainer").html(
+                component.applyNow(
+                  result.trainingList[0],
+                  "",
+                  context,
+                  result.trainingList[0].instructorName
+                )
+              );
+            } else {
+              console.log("No training found for programId");
+              $("#trainingcontainer").show();
+            }
+          } catch (error) {
+            console.error("Error loading program from URL", error);
+            $("#trainingcontainer").show();
+          }
+        })();
+      }
+    });
+  }
+  protected getPropertyPaneConfiguration(): IPropertyPaneConfiguration {
+    return {
+      pages: [
+        {
+          header: {
+            description: strings.PropertyPaneDescription,
+          },
+          groups: [
+            {
+              groupName: strings.BasicGroupName,
+              groupFields: [
+                PropertyPaneTextField("description", {
+                  label: strings.DescriptionFieldLabel,
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  private getCoursesItems = () => {
+    return new DevExpress.data.CustomStore({
+      loadMode: "raw",
+      load: async () => {
+        const selectedIndex: any = $("#tabs")
+          .dxTabPanel("instance")
+          .option("selectedIndex");
+        return await this.getData(selectedIndex);
+        // return [];
+      },
+    });
+  }
+
+  private getData = async (selectedTab) => {
+    let userId =
+      this.context.pageContext.legacyPageContext.userLoginName.replace(
+        `${process.env.BBYN_DOMAIN}\\`,
+        ""
+      );
+    if (userId.includes("U")) {
+      userId = userId.substring(0, userId.length - 1);
+    }
+
+    if (userId.includes("U")) {
+      userId = userId.substring(0, userId.length - 1);
+    }
+    userId = parseInt(userId, 10);
+
+    const settingsLearningHistory: any = {
+      url: `${process.env.BBYN_WEBAPI}/api/rest/GetLearningHistory/${userId}`,
+      method: "GET",
+      timeout: 0,
+    };
+    const resultLearningHistory: any = await $.ajax(settingsLearningHistory);
+    const learningList = resultLearningHistory.learningList
+      ? resultLearningHistory.learningList
+      : [];
+
+    const settingsTrainingCourseDetails: any = {
+      url: `${process.env.BBYN_WEBAPI}/api/rest/GetTrainingCourseDetails/${userId}`,
+      method: "GET",
+      timeout: 0,
+    };
+    const resultTrainingCourseDetails: any = await $.ajax(
+      settingsTrainingCourseDetails
+    );
+    let trainingList = resultTrainingCourseDetails.trainingList
+      ? resultTrainingCourseDetails.trainingList
+      : [];
+
+    if (selectedTab === 1) {
+      // Registration History
+      return learningList;
+    } else {
+      // Training List
+      const uniqueLearningHistoryProgramId = [
+        ...new Set(learningList.map((item) => item.programId)),
+      ];
+      if (uniqueLearningHistoryProgramId.length > 0) {
+        trainingList = trainingList.filter(
+          (program) =>
+            !uniqueLearningHistoryProgramId.includes(program.programId)
+        );
+      }
+      return trainingList;
+    }
+  }
+}
+
+const getTrainingByprogramID = async (context, programId) => {
+  let userId = context.pageContext.legacyPageContext.userLoginName.replace(
+    `${process.env.BBYN_DOMAIN}\\`,
+    ""
+  );
+  if (userId.includes("U")) {
+    userId = userId.substring(0, userId.length - 1);
+  }
+  userId = parseInt(userId, 10);
+  const settings: any = {
+    url: `${process.env.BBYN_WEBAPI}/api/rest/GetTrainingCourseDetails/${userId}/${programId}`,
+    method: "GET",
+    timeout: 0,
+  };
+  const results: any = await $.ajax(settings);
+
+  console.log(results);
+
+  return results;
+};
+
+const getHistoryCourse = async (context, programId) => {
+  let userId = context.pageContext.legacyPageContext.userLoginName.replace(
+    `${process.env.BBYN_DOMAIN}\\`,
+    ""
+  );
+  if (userId.includes("U")) {
+    userId = userId.substring(0, userId.length - 1);
+  }
+  userId = parseInt(userId, 10);
+  const settings: any = {
+    url: `${process.env.BBYN_WEBAPI}/api/rest/GetLearningHistory/${userId}`,
+    method: "GET",
+    timeout: 0,
+  };
+  const results: any = await $.ajax(settings);
+  if (results && results.learningList && results.learningList.length > 0) {
+    const coursesFound = results.learningList.filter(
+      (r) => r.programId === programId
+    );
+    if (coursesFound.length > 0) {
+      const course = coursesFound[0];
+      return {
+        venue: course.venue,
+        instructorName: course.instructorName,
+        programName: course.programName,
+        startDate: course.programStartDate,
+        endDate: course.programEndDate,
+        totalDays: course.totalDays,
+        description: course.description,
+        attachments: [],
+      };
+    } else {
+      return {
+        venue: "Not Available",
+        instructorName: "Not Available",
+        programName: "Not Available",
+        startDate: new Date(1900, 1, 1),
+        endDate: new Date(1900, 1, 1),
+        totalDays: "Not Available",
+        description: "Not Available",
+        attachments: [],
+      };
+    }
+  }
+  return {
+    venue: "Not Available",
+    instructorName: "Not Available",
+    programName: "Not Available",
+    startDate: new Date(1900, 1, 1),
+    endDate: new Date(1900, 1, 1),
+    totalDays: "Not Available",
+    description: "Not Available",
+    attachments: [],
+  };
+};
