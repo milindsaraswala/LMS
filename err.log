@@ -1,0 +1,97 @@
+.bbs-wrapper {
+  display: flex;
+  min-height: 700px;
+  background: #f4f6f9;
+}
+
+.bbs-sidebar {
+  width: 260px;
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  padding: 20px 0;
+}
+
+.bbs-title {
+  font-size: 18px;
+  font-weight: 600;
+  padding: 0 20px 20px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.bbs-sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bbs-sidebar li {
+  padding: 14px 20px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #444;
+  transition: all 0.2s ease;
+}
+
+.bbs-sidebar li:hover {
+  background-color: #f1f3f6;
+}
+
+.bbs-sidebar li.active {
+  background-color: #fff;
+  border-left: 4px solid #c00000;
+  font-weight: 600;
+  color: #c00000;
+}
+
+.bbs-main {
+  flex: 1;
+  padding: 30px;
+  background: #ffffff;
+}
+
+
+private initializeNavigation(): void {
+
+  const loadView = async (view: string) => {
+
+    $("#bbsContentArea").html("");
+
+    switch (view) {
+
+      case "about":
+        $("#bbsContentArea").html("<h2>About Section</h2>");
+        break;
+
+      case "dashboard":
+        $("#bbsContentArea").html("<h2>Dashboard Section</h2>");
+        break;
+
+      case "learning":
+        $("<div id='learningGrid'/>")
+          .appendTo("#bbsContentArea")
+          .dxDataGrid({
+            dataSource: this.getCoursesItems(),
+            // reuse your grid config here
+          });
+        break;
+
+      case "required":
+        $("#bbsContentArea").html("<h2>Required Actions</h2>");
+        break;
+
+      case "competencies":
+        $("#bbsContentArea").html("<h2>Competencies & Feedback</h2>");
+        break;
+    }
+  };
+
+  $("#bbsMenu li").on("click", function () {
+    $("#bbsMenu li").removeClass("active");
+    $(this).addClass("active");
+
+    const view = $(this).data("view");
+    loadView(view);
+  });
+
+  loadView("about");
+}
