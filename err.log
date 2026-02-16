@@ -1,3 +1,237 @@
+import {
+  BaseClientSideWebPart,
+  IPropertyPaneConfiguration,
+  PropertyPaneTextField
+} from "@microsoft/sp-webpart-base";
+import * as $ from "jquery";
 
+import * as strings from "BusinessSchoolDashboardWebPartStrings";
+
+require("../../assets/dashboardStyle.css");
+
+export interface IBusinessSchoolDashboardWebPartProps {
+  description: string;
+}
+
+export default class BusinessSchoolDashboardWebPart extends BaseClientSideWebPart<IBusinessSchoolDashboardWebPartProps> {
+
+  public render(): void {
+    this.domElement.innerHTML = `
+      <div class="bbs-layout">
+        <div class="bbs-left-panel">
+          <div class="bbs-left-header">Boubyan Business School</div>
+            <ul id="bbsMenu">
+              <li data-view="about" class="active">About</li>
+              <li data-view="dashboard">Dashboard</li>
+              <li data-view="learning">My Learning</li>
+              <li data-view="required">Required Action</li>
+              <li data-view="competencies">Competencies & Development</li>
+              <li data-view="communication">Communication & Feedback</li>
+              <li data-view="account">Account Settings Page</li>
+            </ul>
+          </div>
+
+          <div class="bbs-right-panel">
+            <div class="bbs-top-strip">
+              <!-- Optional breadcrumb / title area -->
+          </div>
+
+          <div class="bbs-content">
+            <div id="bbsContentArea"></div>
+          </div>
+        </div>
+      </div>
+      `;
+
+    this.initializeNavigation();
+  }
+
+  protected getPropertyPaneConfiguration(): IPropertyPaneConfiguration {
+    return {
+      pages: [
+        {
+          header: {
+            description: strings.PropertyPaneDescription
+          },
+          groups: [
+            {
+              groupName: strings.BasicGroupName,
+              groupFields: [
+                PropertyPaneTextField("description", {
+                  label: strings.DescriptionFieldLabel
+                })
+              ]
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  private initializeNavigation(): void {
+
+    const loadView = async (view: string) => {
+
+      $("#bbsContentArea").html("");
+
+      switch (view) {
+
+        case "about":
+          $(".bbs-top-strip").html("<h2>About Section</h2>");
+          break;
+
+        case "dashboard":
+          $(".bbs-top-strip").html("<h2>Dashboard Section</h2>");
+          break;
+
+        case "learning":
+          // $("<div id='learningGrid'/>")
+          //   .appendTo("#bbsContentArea")
+          //   .dxDataGrid({
+          //     dataSource: this.getCoursesItems(),
+          //     // reuse your grid config here
+          //   });
+          break;
+
+        case "required":
+          $(".bbs-top-strip").html("<h2>Required Actions</h2>");
+          break;
+
+        case "competencies":
+          $("#.bbs-top-strip").html("<h2>Competencies & Feedback</h2>");
+          break;
+      }
+    };
+
+    $("#bbsMenu li").on("click", function () {
+      $("#bbsMenu li").removeClass("active");
+      $(this).addClass("active");
+
+      const view = $(this).data("view");
+      loadView(view);
+    });
+
+    loadView("about");
+  }
+}
+=============================================
+
+.bbs-layout {
+  display: flex;
+  min-height: calc(100vh-120px);
+  width: 100%;
+  background: #ffffff;
+}
+
+.bbs-left-panel {
+  width: 280px;
+  background: #f4f5f7 !important;
+  border-right: 1px solid #d9d9d9;
+  min-height: 100%;
+  padding-top: 30px;
+}
+
+.bbs-left-panel {
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.04);
+}
+
+.bbs-left-header {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 20px 18px 25px;
+  color: #333;
+  border-bottom: 1px solid #dcdcdc;
+  margin-bottom: 10px;
+}
+
+.bbs-left-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bbs-left-panel li {
+  position: relative;
+  padding: 12px 20px 12px 35px;
+  font-size: 14px;
+  color: #4a4a4a;
+  cursor: pointer;
+  /* transition: background 0.2s ease; */
+}
+
+.bbs-left-panel li:hover {
+  background: #e9ecef;
+}
+
+.bbs-left-panel li.active {
+  color: #c00000;
+  font-weight: 600;
+}
+
+.bbs-left-panel li.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: #c00000;
+}
+
+
+.bbs-right-panel {
+  flex: 1;
+  background: #ffffff;
+  /* display: flex;
+  flex-direction: column; */
+  padding: 40px 60px;
+}
+
+
+.bbs-top-strip {
+  height: 50px;
+  border-bottom: 1px solid #e1e1e1;
+  background: #ffffff;
+  padding-left: 20px;
+}
+
+
+.bbs-content {
+  padding: 30px 40px;
+  background: #ffffff;
+}
+
+.CanvasZone,
+.CanvasSection,
+.ControlZone {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0 !important;
+}
+
+body,
+.spPageChrome {
+  background: #f2f3f5 !important;
+}
+
+.bbs-left-panel li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px 10px 25px;
+  font-size: 14px;
+  color: #4a4a4a;
+}
+
+.bbs-icon {
+  width: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.bbs-left-panel li.active svg {
+  stroke: #c00000;
+  fill: #c00000;
+}
 
 
