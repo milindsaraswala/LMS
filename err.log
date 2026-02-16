@@ -1,1 +1,105 @@
+<div class="bbs-layout">
+
+  <div class="bbs-left-panel">
+    <div class="bbs-left-header">Boubyan Business School</div>
+    <ul id="bbsMenu">
+      <li data-view="about" class="active">About</li>
+      <li data-view="dashboard">Dashboard</li>
+      <li data-view="learning">My Learning</li>
+      <li data-view="required">Required Action</li>
+      <li data-view="competencies">Competencies & Development</li>
+      <li data-view="communication">Communication & Feedback</li>
+      <li data-view="account">Account Settings Page</li>
+    </ul>
+  </div>
+
+  <div class="bbs-right-panel">
+    <div class="bbs-top-strip">
+      <!-- Optional breadcrumb / title area -->
+    </div>
+
+    <div class="bbs-content">
+      <div id="bbsContentArea"></div>
+    </div>
+  </div>
+
+</div>
+
+.bbs-layout {
+  display: flex;
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+/* LEFT PANEL */
+.bbs-left-panel {
+  width: 260px;
+  background: #f5f6f7;
+  border-right: 1px solid #dcdcdc;
+  padding-top: 25px;
+}
+
+.bbs-left-header {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 20px 20px 20px;
+  color: #333;
+}
+
+/* MENU */
+.bbs-left-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.bbs-left-panel li {
+  position: relative;
+  padding: 10px 20px 10px 30px;
+  font-size: 13px;
+  color: #555;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.bbs-left-panel li:hover {
+  background: #e9ecef;
+}
+
+.bbs-left-panel li.active {
+  color: #c00000;
+  font-weight: 600;
+}
+
+/* Red vertical indicator */
+.bbs-left-panel li.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: #c00000;
+}
+
+/* RIGHT PANEL */
+.bbs-right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Optional top thin separator */
+.bbs-top-strip {
+  height: 50px;
+  border-bottom: 1px solid #e1e1e1;
+  background: #ffffff;
+}
+
+/* CONTENT AREA */
+.bbs-content {
+  padding: 30px 40px;
+  background: #ffffff;
+}
+
 
