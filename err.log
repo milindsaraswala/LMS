@@ -1,1 +1,42 @@
+.bbs-layout,
+.bbs-layout * {
+  font-family: "Segoe UI", Arial, sans-serif;
+}
 
+.bbs-title {
+  font-size: 28px;
+  font-weight: 500;
+  color: #222;
+  margin-bottom: 20px;
+}
+
+.bbs-card-left p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #555;
+  margin-bottom: 15px;
+}
+
+<div class="bbs-btn-wrapper">
+  <button class="bbs-primary-btn">Apply Now</button>
+</div>
+
+.bbs-btn-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+.bbs-primary-btn {
+  background: #c00000;
+  color: #ffffff;
+  border: none;
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.bbs-primary-btn:hover {
+  background: #a00000;
+}
