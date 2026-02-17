@@ -1,36 +1,6 @@
 case "about":
 
-  $(".bbs-top-strip").html("<h2>About</h2>");
-
-  $("#bbsContentArea").html(`
-    <div class="bbs-card">
-      <div class="bbs-card-inner">
-
-        <div class="bbs-card-left">
-          <h1 class="bbs-title">Boubyan Business School</h1>
-
-          <p>
-            Boubyan Business School comprises of five main educational and training schools 
-            that aim to develop our employees’ skills and abilities in various banking areas, 
-            while helping them acquire diverse skillsets.
-          </p>
-
-          <p>
-            The five main schools serve as an umbrella for a number of other specialized academies 
-            focusing on all technical areas of the banking business to help accelerate digital and 
-            technological transformation.
-          </p>
-
-          <button class="bbs-primary-btn">Apply Now</button>
-        </div>
-
-        <div class="bbs-card-right">
-          <img src="/sites/yoursite/SiteAssets/business-school.png" />
-        </div>
-
-      </div>
-    </div>
-  `);
+  
 
   break;
 
