@@ -1,47 +1,19 @@
-$("#bbsMenu").off("click"); // prevent duplicate binding if render called again
+/* Submenu active item */
+.submenu li.sub-active {
+  background: #edf0f3;
+  color: #c00000;
+  font-weight: 600;
+  position: relative;
+}
 
-$("#bbsMenu").on("click", function (e) {
-
-  var $target = $(e.target as any);
-
-  // If clicked anywhere inside menu-item (Dashboard parent)
-  var $menuItem = $target.closest(".menu-item");
-  if ($menuItem.length > 0) {
-    var $parent = $menuItem.closest(".has-submenu");
-    $parent.toggleClass("open");
-    return;
-  }
-
-  // If clicked a submenu LI
-  var $subLi = $target.closest(".submenu li");
-  if ($subLi.length > 0) {
-
-    // Active highlight only for submenu items
-    $("#bbsMenu li").removeClass("active");
-    $(".submenu li").removeClass("sub-active");
-
-    $subLi.addClass("sub-active");
-
-    var view = $subLi.attr("data-view");
-    if (view) loadView(view);
-
-    return;
-  }
-
-  // If clicked a normal top-level LI (no submenu)
-  var $topLi = $target.closest("#bbsMenu > li").not(".has-submenu");
-  if ($topLi.length > 0) {
-
-    $("#bbsMenu li").removeClass("active");
-    $(".submenu li").removeClass("sub-active");
-    $(".has-submenu").removeClass("open");
-
-    $topLi.addClass("active");
-
-    var view2 = $topLi.attr("data-view");
-    if (view2) loadView(view2);
-
-    return;
-  }
-
-});
+/* Small red indicator for submenu (optional) */
+.submenu li.sub-active::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: #c00000;
+  border-radius: 2px;
+}
