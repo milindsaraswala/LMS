@@ -1,136 +1,78 @@
-/* ONLY top-level menu items */
-#bbsMenu > li {
-  position: relative;
-  padding: 15px 20px 15px 45px;
-  font-size: 14px;
-  color: #4a4a4a;
-  cursor: pointer;
-  border-bottom: 1px solid #e5e5e5;
-  transition: background 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  white-space: nowrap;
+private renderDashboardGrid(): void {
+
+  const context = this.context;
+
+  // Prevent duplicate instance
+  const existingInstance = $("#dashboardGrid").dxDataGrid("instance");
+  if (existingInstance) {
+    existingInstance.dispose();
+    $("#dashboardGrid").empty();
+  }
+
+  $("#dashboardGrid").dxDataGrid({
+    dataSource: this.getCoursesItems(),   // reuse your existing method
+    paging: {
+      pageSize: 10
+    },
+    pager: {
+      showPageSizeSelector: true,
+      allowedPageSizes: [10, 20, 50],
+      showInfo: true
+    },
+    searchPanel: {
+      visible: true,
+      width: 250,
+      placeholder: "Search..."
+    },
+    showBorders: false,
+    columnAutoWidth: true,
+    rowAlternationEnabled: true,
+    hoverStateEnabled: true,
+    columns: [
+      {
+        dataField: "programName",
+        caption: "Program Name",
+        width: 250
+      },
+      {
+        dataField: "trainingCategory",
+        caption: "Category",
+        width: 200
+      },
+      {
+        dataField: "startDate",
+        caption: "Start Date",
+        dataType: "date",
+        format: "dd-MMM-yyyy"
+      },
+      {
+        dataField: "endDate",
+        caption: "End Date",
+        dataType: "date",
+        format: "dd-MMM-yyyy"
+      },
+      {
+        dataField: "venue",
+        caption: "Venue"
+      }
+    ]
+  });
+
 }
 
-/* Parent that contains submenu should NOT be flex itself */
-#bbsMenu > li.has-submenu {
-  display: block;
-  padding: 0;                /* important */
-  border-bottom: 1px solid #e5e5e5;
+.bbs-grid-wrapper {
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  padding: 20px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
 }
 
-/* The clickable row inside has-submenu */
-#bbsMenu > li.has-submenu > .menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 20px 15px 45px;
-  color: #4a4a4a;
-  cursor: pointer;
+private getCoursesItems = () => {
+  return new DevExpress.data.CustomStore({
+    loadMode: "raw",
+    load: async () => {
+      return await this.getData(0);  // dashboard = upcoming
+    }
+  });
 }
 
-#bbsMenu > li.has-submenu > .menu-item:hover {
-  background: #e9ecef;
-}
-
-.submenu {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  background: #f0f2f4;
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.2s ease;
-}
-
-.has-submenu.open .submenu {
-  max-height: 400px;
-}
-
-.submenu li {
-  display: block; /* key fix */
-  padding: 12px 20px 12px 60px;
-  font-size: 13px;
-  color: #555;
-  border-top: 1px solid #e5e5e5;   /* looks cleaner than bottom here */
-  cursor: pointer;
-  white-space: normal; /* allow wrapping instead of breaking ugly */
-}
-
-.submenu li:hover {
-  background: #e6e9ed;
-}
-
-/* Active style for normal top-level items */
-#bbsMenu > li.active {
-  color: #c00000;
-  font-weight: 600;
-  background: #edf0f3;
-}
-
-#bbsMenu > li.active::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 10px;
-  bottom: 10px;
-  width: 2px;
-  background: #c00000;
-  border-radius: 2px;
-}
-
-/* If submenu child is active, style the parent row */
-#bbsMenu > li.has-submenu.child-active > .menu-item {
-  color: #c00000;
-  font-weight: 600;
-  background: #edf0f3;
-  position: relative;
-}
-
-#bbsMenu > li.has-submenu.child-active > .menu-item::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 10px;
-  bottom: 10px;
-  width: 2px;
-  background: #c00000;
-  border-radius: 2px;
-}
-
-const $subLi = $target.closest(".submenu li");
-if ($subLi.length > 0) {
-
-  $("#bbsMenu > li").removeClass("active child-active");
-  $(".submenu li").removeClass("sub-active");
-
-  $subLi.addClass("sub-active");
-  $subLi.closest(".has-submenu").addClass("child-active open");
-
-  const view = $subLi.attr("data-view");
-  if (view) { loadView(view); }
-
-  return;
-}
-
-const $topLi = $target.closest("#bbsMenu > li").not(".has-submenu");
-if ($topLi.length > 0) {
-
-  $("#bbsMenu > li").removeClass("active child-active");
-  $(".submenu li").removeClass("sub-active");
-  $(".has-submenu").removeClass("open");
-
-  $topLi.addClass("active");
-
-  const view2 = $topLi.attr("data-view");
-  if (view2) { loadView(view2); }
-
-  return;
-}
-
-.submenu-arrow {
-  margin-left: auto;
-  font-size: 12px;
-  transition: transform 0.2s ease;
-}
