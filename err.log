@@ -1,78 +1,161 @@
-private renderDashboardGrid(): void {
+case "account":
 
-  const context = this.context;
+  $(".bbs-top-strip").html("<h2>Account Settings</h2>");
 
-  // Prevent duplicate instance
-  const existingInstance = $("#dashboardGrid").dxDataGrid("instance");
-  if (existingInstance) {
-    existingInstance.dispose();
-    $("#dashboardGrid").empty();
-  }
+  $("#bbsContentArea").html(`
+    <div class="bbs-card">
+      <div class="bbs-profile-wrapper">
 
-  $("#dashboardGrid").dxDataGrid({
-    dataSource: this.getCoursesItems(),   // reuse your existing method
-    paging: {
-      pageSize: 10
-    },
-    pager: {
-      showPageSizeSelector: true,
-      allowedPageSizes: [10, 20, 50],
-      showInfo: true
-    },
-    searchPanel: {
-      visible: true,
-      width: 250,
-      placeholder: "Search..."
-    },
-    showBorders: false,
-    columnAutoWidth: true,
-    rowAlternationEnabled: true,
-    hoverStateEnabled: true,
-    columns: [
-      {
-        dataField: "programName",
-        caption: "Program Name",
-        width: 250
-      },
-      {
-        dataField: "trainingCategory",
-        caption: "Category",
-        width: 200
-      },
-      {
-        dataField: "startDate",
-        caption: "Start Date",
-        dataType: "date",
-        format: "dd-MMM-yyyy"
-      },
-      {
-        dataField: "endDate",
-        caption: "End Date",
-        dataType: "date",
-        format: "dd-MMM-yyyy"
-      },
-      {
-        dataField: "venue",
-        caption: "Venue"
-      }
-    ]
+        <div class="bbs-profile-left">
+          <div class="bbs-avatar-circle">
+            <span id="bbsInitials">MS</span>
+          </div>
+          <button id="changePhotoBtn" class="bbs-secondary-btn">
+            Change Photo
+          </button>
+        </div>
+
+        <div class="bbs-profile-right">
+
+          <div class="bbs-form-row">
+            <label>Full Name</label>
+            <input type="text" id="profileFullName" />
+          </div>
+
+          <div class="bbs-form-row">
+            <label>Email</label>
+            <input type="text" id="profileEmail" disabled />
+          </div>
+
+          <div class="bbs-form-row">
+            <label>Department</label>
+            <input type="text" id="profileDepartment" />
+          </div>
+
+          <div class="bbs-form-row">
+            <label>Phone</label>
+            <input type="text" id="profilePhone" />
+          </div>
+
+          <div class="bbs-btn-wrapper">
+            <button id="saveProfileBtn" class="bbs-primary-btn">
+              Save Changes
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `);
+
+  this.initializeProfile();
+  break;
+
+private initializeProfile(): void {
+
+  const currentUser = this.context.pageContext.user;
+
+  const fullName = currentUser.displayName;
+  const email = currentUser.email;
+
+  $("#profileFullName").val(fullName);
+  $("#profileEmail").val(email);
+
+  const initials = fullName
+    .split(" ")
+    .map(n => n[0])
+    .join("")
+    .substring(0, 2)
+    .toUpperCase();
+
+  $("#bbsInitials").text(initials);
+
+  $("#saveProfileBtn").on("click", () => {
+
+    const updatedProfile = {
+      fullName: $("#profileFullName").val(),
+      department: $("#profileDepartment").val(),
+      phone: $("#profilePhone").val()
+    };
+
+    console.log("Profile to save:", updatedProfile);
+
+    alert("Profile saved successfully");
+
+    // Later you can call API here
+    // $.ajax(...)
   });
-
 }
 
-.bbs-grid-wrapper {
+.bbs-profile-wrapper {
+  display: flex;
+  gap: 50px;
+  align-items: flex-start;
+}
+
+.bbs-profile-left {
+  width: 220px;
+  text-align: center;
+}
+
+.bbs-avatar-circle {
+  width: 120px;
+  height: 120px;
+  background: #c00000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px auto;
+}
+
+.bbs-avatar-circle span {
+  font-size: 32px;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.bbs-secondary-btn {
   background: #ffffff;
+  border: 1px solid #c00000;
+  color: #c00000;
+  padding: 6px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.bbs-secondary-btn:hover {
+  background: #c00000;
+  color: #ffffff;
+}
+
+.bbs-profile-right {
+  flex: 1;
+}
+
+.bbs-form-row {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 20px;
+}
+
+.bbs-form-row label {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #444;
+}
+
+.bbs-form-row input {
+  height: 36px;
+  padding: 6px 10px;
   border: 1px solid #dcdcdc;
-  padding: 20px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  border-radius: 2px;
+  font-size: 13px;
 }
 
-private getCoursesItems = () => {
-  return new DevExpress.data.CustomStore({
-    loadMode: "raw",
-    load: async () => {
-      return await this.getData(0);  // dashboard = upcoming
-    }
-  });
+.bbs-form-row input:focus {
+  outline: none;
+  border-color: #c00000;
 }
-
