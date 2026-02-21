@@ -1,19 +1,1 @@
-.bbs-file-label {
-  padding: 8px 16px;
-  border: 1px solid #c00000;
-  color: #c00000;
-  font-size: 13px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.bbs-file-label:hover {
-  background: #c00000;
-  color: #ffffff;
-}
-
-
-
-
-
 
