@@ -1,1 +1,168 @@
+case "account":
 
+  $(".bbs-top-strip").html("<h2>Account Settings</h2>");
+
+  $("#bbsContentArea").html(`
+    <div class="bbs-card">
+
+      <div class="bbs-settings-wrapper">
+
+        <!-- Profile Photo -->
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Profile Photo</h3>
+          <div class="bbs-photo-row">
+            <div class="bbs-avatar-circle">
+              <span id="bbsInitials">MS</span>
+            </div>
+            <div>
+              <input type="file" id="profilePhotoUpload" accept="image/*" />
+              <button id="savePhotoBtn" class="bbs-primary-btn">Update Photo</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Personal Details -->
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Personal Details</h3>
+
+          <div class="bbs-form-row">
+            <label>Full Name</label>
+            <input type="text" id="profileFullName" disabled />
+          </div>
+
+          <div class="bbs-form-row">
+            <label>Email</label>
+            <input type="text" id="profileEmail" disabled />
+          </div>
+
+          <div class="bbs-form-row">
+            <label>Department</label>
+            <input type="text" id="profileDepartment" disabled />
+          </div>
+        </div>
+
+        <!-- Preferred Language -->
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Preferred Language</h3>
+
+          <div class="bbs-radio-group">
+            <label>
+              <input type="radio" name="language" value="en" checked />
+              English
+            </label>
+
+            <label>
+              <input type="radio" name="language" value="ar" />
+              Arabic
+            </label>
+          </div>
+        </div>
+
+        <!-- Notification Settings -->
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Notification Settings</h3>
+
+          <div class="bbs-checkbox-group">
+            <label>
+              <input type="checkbox" value="email" checked />
+              Email
+            </label>
+
+            <label>
+              <input type="checkbox" value="whatsapp" />
+              WhatsApp
+            </label>
+
+            <label>
+              <input type="checkbox" value="push" />
+              Push Notifications
+            </label>
+          </div>
+        </div>
+
+        <div class="bbs-btn-wrapper">
+          <button id="saveSettingsBtn" class="bbs-primary-btn">
+            Save Settings
+          </button>
+        </div>
+
+      </div>
+    </div>
+  `);
+
+  this.initializeAccountSettings();
+  break;
+
+private initializeAccountSettings(): void {
+
+  const user = this.context.pageContext.user;
+
+  $("#profileFullName").val(user.displayName);
+  $("#profileEmail").val(user.email);
+  $("#profileDepartment").val("Banking Operations"); // replace with real API later
+
+  const initials = user.displayName
+    .split(" ")
+    .map(n => n[0])
+    .join("")
+    .substring(0, 2)
+    .toUpperCase();
+
+  $("#bbsInitials").text(initials);
+
+  $("#saveSettingsBtn").on("click", () => {
+
+    const language = $("input[name='language']:checked").val();
+
+    const notifications: string[] = [];
+    $(".bbs-checkbox-group input:checked").each(function () {
+      notifications.push($(this).val() as string);
+    });
+
+    const payload = {
+      language,
+      notifications
+    };
+
+    console.log("Saving settings:", payload);
+
+    alert("Settings saved successfully");
+  });
+}
+
+.bbs-settings-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.bbs-settings-section {
+  border-bottom: 1px solid #e5e5e5;
+  padding-bottom: 25px;
+}
+
+.bbs-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #222;
+}
+
+.bbs-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.bbs-radio-group,
+.bbs-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bbs-radio-group label,
+.bbs-checkbox-group label {
+  font-size: 14px;
+  cursor: pointer;
+}
