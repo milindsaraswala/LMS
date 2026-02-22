@@ -1,4 +1,112 @@
+private async renderAnnouncementsPreview(): Promise<void> {
 
+  const response = await this.context.spHttpClient.get(
+    `${this.context.pageContext.web.absoluteUrl}/_api/web/lists/getbytitle('Site Pages')/items?
+      $filter=PromotedState eq 2
+      &$orderby=FirstPublishedDate desc
+      &$top=3
+      &$select=Title,BannerImageUrl,Description,FirstPublishedDate,FileRef,Editor/Title
+      &$expand=Editor`,
+    SPHttpClient.configurations.v1
+  );
+
+  const data = await response.json();
+
+  let html = `<div class="bbs-announcement-grid">`;
+
+  data.value.forEach((item: any) => {
+
+    const banner = item.BannerImageUrl
+      ? JSON.parse(item.BannerImageUrl).serverRelativeUrl
+      : "";
+
+    const title = item.Title;
+    const desc = item.Description || "";
+    const modifiedBy = item.Editor?.Title || "";
+    const date = new Date(item.FirstPublishedDate).toLocaleDateString();
+    const newsUrl = item.FileRef;
+
+    html += `
+      <div class="bbs-announcement-card" data-url="${newsUrl}">
+
+        ${banner ? `<div class="bbs-announcement-image">
+            <img src="${banner}" />
+          </div>` : ""}
+
+        <div class="bbs-announcement-content">
+          <h4>${title}</h4>
+          <p class="bbs-announcement-desc">${desc}</p>
+
+          <div class="bbs-announcement-meta">
+            <span>Published: ${date}</span>
+            <span>Modified By: ${modifiedBy}</span>
+          </div>
+        </div>
+
+      </div>
+    `;
+  });
+
+  html += `</div>`;
+
+  $("#bbsAnnouncementsPreview").html(html);
+
+  $(".bbs-announcement-card").on("click", function () {
+    const url = $(this).data("url");
+    window.location.href = url;
+  });
+}
+
+.bbs-announcement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 25px;
+}
+
+.bbs-announcement-card {
+  background: #ffffff;
+  border: 1px solid #e5e5e5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.bbs-announcement-card:hover {
+  border-color: #c00000;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+}
+
+.bbs-announcement-image img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+}
+
+.bbs-announcement-content {
+  padding: 18px;
+}
+
+.bbs-announcement-content h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #222;
+}
+
+.bbs-announcement-desc {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 15px;
+  line-height: 1.5;
+}
+
+.bbs-announcement-meta {
+  font-size: 12px;
+  color: #777;
+  display: flex;
+  justify-content: space-between;
+}
 
 
 
