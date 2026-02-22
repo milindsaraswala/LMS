@@ -1,48 +1,5 @@
 
 
-private async renderAnnouncementsPreview(): Promise<void> {
 
-  const newsItems = await this.context.spHttpClient.get(
-    `${this.context.pageContext.web.absoluteUrl}/_api/web/lists/getbytitle('Site Pages')/items?$filter=PromotedState eq 2&$orderby=FirstPublishedDate desc&$top=3`,
-    SPHttpClient.configurations.v1
-  );
-
-  const response = await newsItems.json();
-
-  let html = `<div class="bbs-announcement-grid">`;
-
-  response.value.forEach((item: any) => {
-
-    const newsUrl = item.FileRef;
-    const title = item.Title;
-    const date = new Date(item.FirstPublishedDate).toLocaleDateString();
-
-    html += `
-      <div class="bbs-announcement-card" data-url="${newsUrl}">
-        <h4>${title}</h4>
-        <div class="bbs-announcement-date">${date}</div>
-      </div>
-    `;
-  });
-
-  html += `</div>`;
-
-  $("#bbsAnnouncementsPreview").html(html);
-
-  $(".bbs-announcement-card").on("click", function () {
-    const url = $(this).data("url");
-    window.location.href = url;
-  });
-}
-
-private bindViewAllNews(): void {
-
-  $("#bbsViewAllNews").on("click", () => {
-    window.location.href =
-      this.context.pageContext.web.absoluteUrl + "/SitePages/Forms/ByAuthor.aspx"; 
-    // Replace with your news page link if different
-  });
-
-}
 
 
