@@ -1,0 +1,46 @@
+/* Hide scrollbar by default */
+.bbs-left-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.bbs-left-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bbs-left-panel::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+}
+
+/* Show scrollbar on hover */
+.bbs-left-panel:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.bbs-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.bbs-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bbs-content::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+}
+
+.bbs-content:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.bbs-left-panel:hover::-webkit-scrollbar-thumb,
+.bbs-content:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.bbs-left-panel,
+.bbs-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.25) transparent;
+}
