@@ -1,1 +1,47 @@
+private showLearningCards(): void {
 
+  this.renderSectionCards("My Learning", [
+    {
+      key: "learning-journey",
+      title: "Learning Journey",
+      description: "Track your learning progress and development path.",
+      iconSvg: `
+        <svg viewBox="0 0 24 24" width="28" height="28">
+          <path d="M4 4h16v16H4z" fill="none" stroke="#c00000" stroke-width="2"/>
+        </svg>
+      `
+    },
+    {
+      key: "latest-training-opportunities",
+      title: "Latest Training Opportunities",
+      description: "Browse the latest available learning programs.",
+      iconSvg: `
+        <svg viewBox="0 0 24 24" width="28" height="28">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="#c00000" stroke-width="2"/>
+        </svg>
+      `
+    },
+    {
+      key: "assignments",
+      title: "Assignments",
+      description: "Review pending and completed assignments.",
+      iconSvg: `
+        <svg viewBox="0 0 24 24" width="28" height="28">
+          <path d="M6 4h12v16H6z" fill="none" stroke="#c00000" stroke-width="2"/>
+        </svg>
+      `
+    },
+    {
+      key: "certificates",
+      title: "Certificates",
+      description: "Access issued course certificates.",
+      iconSvg: `
+        <svg viewBox="0 0 24 24" width="28" height="28">
+          <polygon points="12,2 22,8 12,14 2,8" fill="none" stroke="#c00000" stroke-width="2"/>
+        </svg>
+      `
+    }
+  ]);
+
+  this.bindSectionCards("learning");
+}
