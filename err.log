@@ -1,4 +1,83 @@
+<div class="bbs-profile-info">
+  <div class="bbs-profile-row">
+    <span class="bbs-profile-label">Full Name</span>
+    <span id="profileFullName" class="bbs-profile-value"></span>
+  </div>
 
+  <div class="bbs-profile-row">
+    <span class="bbs-profile-label">Email</span>
+    <span id="profileEmail" class="bbs-profile-value"></span>
+  </div>
+
+  <div class="bbs-profile-row">
+    <span class="bbs-profile-label">Department</span>
+    <span id="profileDepartment" class="bbs-profile-value"></span>
+  </div>
+</div>
+
+
+
+
+<div class="bbs-photo-row">
+  <div class="bbs-avatar-circle">
+    <span id="bbsInitials">MS</span>
+  </div>
+
+  <div class="bbs-photo-actions">
+    <label class="bbs-file-label">
+      Choose Photo
+      <input type="file" id="profilePhotoUpload" accept="image/*" hidden />
+    </label>
+
+    <button id="savePhotoBtn" class="bbs-primary-btn">
+      Update Photo
+    </button>
+  </div>
+</div>
+
+
+
+
+$("#profileFullName").text(user.displayName);
+$("#profileEmail").text(user.email);
+$("#profileDepartment").text("Banking Operations");
+
+
+
+.bbs-profile-info {
+  margin-top: 20px;
+}
+
+.bbs-profile-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.bbs-profile-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+}
+
+.bbs-profile-value {
+  font-size: 14px;
+  color: #222;
+}
+
+
+
+.bbs-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+}
+
+.bbs-photo-actions {
+  display: flex;
+  gap: 12px;
+}
 
 
 
