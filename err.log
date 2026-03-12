@@ -127,14 +127,18 @@
 }
 
 .bbs-primary-btn {
-  margin-top: 15px;
   background: #c00000;
   color: #ffffff;
   border: none;
-  padding: 10px 25px;
-  font-size: 14px;
+  min-width: 120px;
+  height: 36px;
+  padding: 0 22px;
+  font-size: 13px;
   cursor: pointer;
   border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bbs-primary-btn:hover {
