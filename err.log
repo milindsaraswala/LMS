@@ -1,1 +1,156 @@
+case "account":
+  $("#bbsPageTitle").text("Account Settings");
+  $("#bbsContentArea").html(`
+    <div class="bbs-card">
+      <div class="bbs-account-header">
+        <div class="bbs-account-left">
+          <div class="bbs-avatar-circle">
+            <span id="bbsInitials">MS</span>
+          </div>
+        </div>
 
+        <div class="bbs-account-middle">
+          <div class="bbs-account-name" id="profileFullName"></div>
+          <div class="bbs-account-email" id="profileEmail"></div>
+          <div class="bbs-account-dept" id="profileDepartment"></div>
+        </div>
+
+        <div class="bbs-account-right">
+          <label class="bbs-file-label">
+            Choose Photo
+            <input type="file" id="profilePhotoUpload" accept="image/*" hidden />
+          </label>
+          <button id="savePhotoBtn" class="bbs-primary-btn">Update Photo</button>
+        </div>
+      </div>
+
+      <div class="bbs-settings-wrapper">
+
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Preferred Language</h3>
+          <div class="bbs-radio-group">
+            <label><input type="radio" name="language" value="en" checked /> English</label>
+            <label><input type="radio" name="language" value="ar" /> Arabic</label>
+          </div>
+        </div>
+
+        <div class="bbs-settings-section">
+          <h3 class="bbs-section-title">Notification Settings</h3>
+          <div class="bbs-checkbox-group">
+            <label><input type="checkbox" value="email" checked /> Email</label>
+            <label><input type="checkbox" value="whatsapp" /> WhatsApp</label>
+            <label><input type="checkbox" value="push" /> Push Notifications</label>
+          </div>
+        </div>
+
+        <div class="bbs-btn-wrapper">
+          <button id="saveSettingsBtn" class="bbs-primary-btn">Save Settings</button>
+        </div>
+
+      </div>
+    </div>
+  `);
+  this.initializeAccountSettings();
+  break;
+
+
+.bbs-account-header {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 30px;
+  align-items: center;
+  padding-bottom: 30px;
+  border-bottom: 1px solid #ececec;
+  margin-bottom: 30px;
+}
+
+.bbs-account-left {
+  display: flex;
+  justify-content: center;
+}
+
+.bbs-account-middle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bbs-account-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: #222;
+}
+
+.bbs-account-email,
+.bbs-account-dept {
+  font-size: 14px;
+  color: #666;
+}
+
+.bbs-account-right {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.bbs-avatar-circle {
+  width: 90px;
+  height: 90px;
+  background: #c00000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.bbs-avatar-circle span {
+  font-size: 32px;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.bbs-settings-wrapper {
+  max-width: 100%;
+  margin: 0;
+}
+
+.bbs-settings-section {
+  border-bottom: 1px solid #ececec;
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+}
+
+.bbs-radio-group,
+.bbs-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bbs-radio-group label,
+.bbs-checkbox-group label {
+  font-size: 14px;
+  color: #444;
+  cursor: pointer;
+}
+
+.bbs-file-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #c00000;
+  color: #c00000;
+  background: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.bbs-file-label:hover {
+  background: #c00000;
+  color: #ffffff;
+}
