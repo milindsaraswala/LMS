@@ -46,7 +46,7 @@ const formatWeightWithTwoDecimalsAndPercentage = (value: any): string => {
 	return `${num.toFixed(2)} %`;
 };
 
-const createFinancialSubTable = (previousYearTitle: string, currentYearTitle: string, userKPI: any): Table => {
+const createFinancialSubTable = (previousYearTitle: string, currentYearTitle: string, userKPI: any, isHoldBack: boolean): Table => {
 	const cellWidth = {
 		size: 12.5,
 		type: WidthType.PERCENTAGE
@@ -119,21 +119,22 @@ const createFinancialSubTable = (previousYearTitle: string, currentYearTitle: st
 					makeCell(` ${String(userKPI.KPIThreshold || "")}`)
 				]
 			}),
-			new TableRow({
-				children: [
-					makeHeadeCell("Q1", "Target"),
-					makeCell(` ${String(userKPI.TargetQ1 || "")}`),
+			...(!isHoldBack ?
+				[new TableRow({
+					children: [
+						makeHeadeCell("Q1", "Target"),
+						makeCell(` ${String(userKPI.TargetQ1 || "")}`),
 
-					makeHeadeCell("Q2", "Target"),
-					makeCell(` ${String(userKPI.TargetQ2 || "")}`),
+						makeHeadeCell("Q2", "Target"),
+						makeCell(` ${String(userKPI.TargetQ2 || "")}`),
 
-					makeHeadeCell("Q3", "Target"),
-					makeCell(` ${String(userKPI.TargetQ3 || "")}`),
+						makeHeadeCell("Q3", "Target"),
+						makeCell(` ${String(userKPI.TargetQ3 || "")}`),
 
-					makeHeadeCell("Q4", "Target"),
-					makeCell(` ${String(userKPI.TargetQ4 || "")}`)
-				]
-			})
+						makeHeadeCell("Q4", "Target"),
+						makeCell(` ${String(userKPI.TargetQ4 || "")}`)
+					]
+				})] : [])
 		]
 	});
 };
@@ -243,6 +244,10 @@ interface IGroupedData {
 		Baseline: string,
 		EndTarget: string,
 		KPIThreshold: string,
+		TargetQ1,
+		TargetQ2,
+		TargetQ3,
+		TargetQ4,
 		SubCategory: string,
 		Weight: string
 	}>;
@@ -280,7 +285,12 @@ const getUserKPI = async (contractId: number, selectedYear: number) => {
 			"LastYearClosing",
 			"Baseline",
 			"EndTarget",
-			"KPIThreshold")
+			"KPIThreshold",
+			"TargetQ1",
+			"TargetQ2",
+			"TargetQ3",
+			"TargetQ4"
+		)
 		.expand("Category", "SubCategory")
 		.filter(`ContractId eq ${contractId} and isDeleted eq false`)
 		.orderBy("Weight", false)
@@ -288,7 +298,22 @@ const getUserKPI = async (contractId: number, selectedYear: number) => {
 		.get();
 
 	const result = dataUserKPI.reduce((acc, obj) => {
-		const { Category, Weight, KPIDescription, SubCategory, Start, End, LastYearClosing, Baseline, EndTarget, KPIThreshold, Id } = obj;
+		const {
+			Category,
+			Weight,
+			KPIDescription,
+			SubCategory,
+			Start,
+			End,
+			LastYearClosing,
+			Baseline,
+			EndTarget,
+			KPIThreshold,
+			TargetQ1,
+			TargetQ2,
+			TargetQ3,
+			TargetQ4,
+			Id } = obj;
 		const key = Category.Title;
 		if (!acc[key]) {
 			acc[key] = { category: key, totalWeight: 0, userKPIs: [], overwrite: false };
@@ -308,6 +333,10 @@ const getUserKPI = async (contractId: number, selectedYear: number) => {
 			Baseline,
 			EndTarget,
 			KPIThreshold,
+			TargetQ1,
+			TargetQ2,
+			TargetQ3,
+			TargetQ4,
 			SubCategory: SubCategory.SubCategory,
 			Weight: Category.EndResultOverwriteString === "false" ? Weight : null
 		});
@@ -320,7 +349,6 @@ const getUserKPI = async (contractId: number, selectedYear: number) => {
 
 	const rows: TableRow[] = [];
 	let row: TableRow;
-	// finalResult.forEach((group: any) => {
 	for (const group of finalResult) {
 		row = new TableRow({
 			height: {
@@ -377,11 +405,11 @@ const getUserKPI = async (contractId: number, selectedYear: number) => {
 							text: `${userKPI.KPIDescription} (timeline: Q${userKPI.Start} - Q${userKPI.End})`,
 							style: "tableRow"
 						}),
-						...(userKPI.SubCategory === "Financial"
-							? [
-								new Paragraph({}),
-								createFinancialSubTable(previousYearTitle, currentYearTitle, userKPI)
-							] : []),
+						/*...(userKPI.SubCategory === "Financial"
+							? [*/
+						new Paragraph({}),
+						createFinancialSubTable(previousYearTitle, currentYearTitle, userKPI, group.category === "HoldBack Scorecard")
+							/*] : [])*/,
 						...(workstepsByKPI.length > 0
 							? [
 								new Paragraph({}),
