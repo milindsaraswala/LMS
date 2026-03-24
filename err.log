@@ -1,0 +1,1233 @@
+/// <reference path="../../../node_modules/@types/devextreme/dx.all.d.ts"/>
+import { SPComponentLoader } from "@microsoft/sp-loader";
+import {
+  BaseClientSideWebPart,
+  IPropertyPaneConfiguration,
+  PropertyPaneTextField
+} from "@microsoft/sp-webpart-base";
+import * as $ from "jquery";
+
+import { sp } from "@pnp/sp/presets/all";
+import * as strings from "BusinessSchoolDashboardWebPartStrings";
+
+require("../../assets/dashboardStyle.css");
+
+export interface IBusinessSchoolDashboardWebPartProps {
+  description: string;
+}
+
+interface ISectionCard {
+  key: string;
+  title: string;
+  description: string;
+  iconSvg: string;
+}
+
+interface ISectionConfig {
+  title: string;
+  cards: ISectionCard[];
+}
+
+export default class BusinessSchoolDashboardWebPart extends BaseClientSideWebPart<IBusinessSchoolDashboardWebPartProps> {
+
+  private _sectionConfigs: { [key: string]: ISectionConfig } = {
+    dashboard: {
+      title: "Dashboard",
+      cards: [
+        {
+          key: "dashboard-pending-assignments",
+          title: "Pending Assignments",
+          description: "View pending assignments together with their current status.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M7 4h10l2 2v14H5V4h2z" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M8 10h8M8 14h6" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "dashboard-upcoming-trainings",
+          title: "Upcoming Trainings",
+          description: "Check your upcoming training programs and scheduled sessions.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M8 3v4M16 3v4M3 10h18" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "dashboard-pending-evaluations",
+          title: "Pending Evaluations",
+          description: "Review evaluations that are still pending for completion.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M12 7v5l3 3" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        }
+      ]
+    },
+
+    learning: {
+      title: "My Learning",
+      cards: [
+        {
+          key: "learning-journey",
+          title: "Learning Journey",
+          description: "Shows full training history.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M4 6h7v12H4zM13 6h7v12h-7z" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "latest-training-opportunities",
+          title: "Latest Training Opportunities",
+          description: "List of all courses the user can apply to.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M3 12l9-5 9 5-9 5-9-5z" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M7 14v3c0 1 2 2 5 2s5-1 5-2v-3" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "learning-assignments",
+          title: "Assignments",
+          description: "Pending and completed assignments.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <rect x="6" y="4" width="12" height="16" rx="1" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M9 9h6M9 13h6" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "learning-certificates",
+          title: "Certificates",
+          description: "List of staff certifications that can be downloaded.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <circle cx="12" cy="9" r="4" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M10 13l-2 7 4-2 4 2-2-7" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        }
+      ]
+    },
+
+    required: {
+      title: "Required Actions",
+      cards: [
+        {
+          key: "required-assessment",
+          title: "Required Assessment",
+          description: "List of required assessments that need to be completed, such as CBK, AML, and InfoSec assessments.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M9 3h6l1 2h4v16H4V5h4l1-2z" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M8 11l2 2 5-5" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "required-training-evaluations",
+          title: "Training Evaluations",
+          description: "Evaluations pending from completed courses.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M12 3l2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.8-5.4 2.8 1-6.1-4.4-4.3 6.1-.9z" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        }
+      ]
+    },
+
+    communication: {
+      title: "Communication & Feedback",
+      cards: [
+        {
+          key: "communication-announcements",
+          title: "Announcements",
+          description: "List of all Learning & Development announcements.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M4 10v4l10-2V8L4 10z" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M14 8l4-2v10l-4-2" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M6 14l1 4h2" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        },
+        {
+          key: "communication-reviews",
+          title: "Reviews",
+          description: "All reviews staff submitted for taken courses.",
+          iconSvg: `
+          <svg viewBox="0 0 24 24" width="30" height="30">
+            <path d="M5 5h14v10H9l-4 4z" fill="none" stroke="#c00000" stroke-width="2"/>
+            <path d="M8 9h8M8 12h5" fill="none" stroke="#c00000" stroke-width="2"/>
+          </svg>
+        `
+        }
+      ]
+    }
+  };
+  public async onInit(): Promise<void> {
+    await super.onInit();
+    SPComponentLoader.loadCss("/CDN/devExtreme/21.2.13/css/dx.light.css");
+
+    sp.setup({
+      spfxContext: this.context,
+    });
+  }
+
+  public render(): void {
+    this.domElement.innerHTML = `
+    <div class="bbs-layout">
+      <div class="bbs-page-shell">
+
+        <div class="bbs-header-wrap">
+          <div class="bbs-header-row">
+            <div class="bbs-header-title" id="bbsPageTitle">About</div>
+
+            <ul id="bbsMenu" class="bbs-subnav">
+              <li data-view="about" class="active">About</li>
+              <li data-view="dashboard">Dashboard</li>
+              <li data-view="learning">My Learning</li>
+              <li data-view="required">Required Actions</li>
+              <li data-view="competencies">Competencies & Development</li>
+              <li data-view="communication">Communication & Feedback</li>
+              <li data-view="account">Account Settings</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="bbs-content" id="bbsContentArea"></div>
+
+      </div>
+    </div>
+  `;
+
+    this.initializeNavigation();
+  }
+
+  protected getPropertyPaneConfiguration(): IPropertyPaneConfiguration {
+    return {
+      pages: [
+        {
+          header: {
+            description: strings.PropertyPaneDescription
+          },
+          groups: [
+            {
+              groupName: strings.BasicGroupName,
+              groupFields: [
+                PropertyPaneTextField("description", {
+                  label: strings.DescriptionFieldLabel
+                })
+              ]
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  private initializeNavigation(): void {
+
+    const loadView = async (view: string) => {
+      $("#bbsContentArea").html("");
+
+      switch (view) {
+        case "about":
+          $("#bbsPageTitle").text("About");
+          $("#bbsContentArea").html(`
+          <div class="bbs-card">
+            <div class="bbs-card-inner">
+              <div class="bbs-card-left">
+                <h1 class="bbs-title">Boubyan Business School</h1>
+                <p>
+                  Boubyan Business School comprises of five main educational and training schools
+                  that aim to develop our employees’ skills and abilities in various banking areas,
+                  while helping them acquire diverse skillsets.
+                </p>
+                <p>
+                  The five main schools serve as an umbrella for a number of other specialized academies
+                  focusing on all technical areas of the banking business to help accelerate digital and
+                  technological transformation.
+                </p>
+                <div class="bbs-btn-wrapper">
+                  <button class="bbs-primary-btn">Apply Now</button>
+                </div>
+              </div>
+              <div class="bbs-card-right">
+                <img src="/CDN/images/genrci%20banner.jpg" />
+              </div>
+            </div>
+          </div>
+        `);
+          break;
+
+        case "competencies":
+          $("#bbsPageTitle").text("Competencies & Development");
+          $("#bbsContentArea").html(`
+          <div class="bbs-card">
+            <h3 class="bbs-section-title">Competencies & Development</h3>
+            <p>Competencies content will appear here.</p>
+          </div>
+        `);
+          break;
+
+        // case "communication":
+        //   $("#bbsPageTitle").text("Communication & Feedback");
+        //   $("#bbsContentArea").html(`
+        //   <div class="bbs-card">
+        //     <div class="bbs-settings-wrapper">
+        //       <div class="bbs-settings-section">
+        //         <h3 class="bbs-section-title">Announcements</h3>
+        //         <div id="bbsAnnouncementsPreview"></div>
+        //         <div class="bbs-announcement-footer">
+        //           <button id="bbsViewAllNews" class="bbs-secondary-btn">View All</button>
+        //         </div>
+        //       </div>
+
+        //       <div class="bbs-settings-section">
+        //         <h3 class="bbs-section-title">Your Course Reviews</h3>
+        //         <div id="bbsReviewsGrid"></div>
+        //       </div>
+        //     </div>
+        //   </div>
+        // `);
+        //   this.renderAnnouncementsPreview();
+        //   // this.renderReviews();
+        //   this.bindViewAllNews();
+        //   break;
+        case "dashboard":
+          $("#bbsPageTitle").text("Dashboard");
+          this.showSectionCards("dashboard");
+          break;
+
+        case "learning":
+          $("#bbsPageTitle").text("My Learning");
+          this.showSectionCards("learning");
+          break;
+
+        case "required":
+          $("#bbsPageTitle").text("Required Actions");
+          this.showSectionCards("required");
+          break;
+
+        case "communication":
+          $("#bbsPageTitle").text("Communication & Feedback");
+          this.showSectionCards("communication");
+          break;
+
+        case "account":
+          $("#bbsPageTitle").text("Account Settings");
+          $("#bbsContentArea").html(`
+              <div class="bbs-card">
+                <div class="bbs-account-header">
+                  <div class="bbs-account-left">
+                    <div class="bbs-avatar-circle">
+                      <span id="bbsInitials">MS</span>
+                    </div>
+                  </div>
+
+                  <div class="bbs-account-middle">
+                    <div class="bbs-account-name" id="profileFullName"></div>
+                    <div class="bbs-account-email" id="profileEmail"></div>
+                    <div class="bbs-account-dept" id="profileDepartment"></div>
+                  </div>
+
+                  <div class="bbs-account-right">
+                    <label class="bbs-file-label">
+                      Choose Photo
+                      <input type="file" id="profilePhotoUpload" accept="image/*" hidden />
+                    </label>
+                    <button id="savePhotoBtn" class="bbs-primary-btn">Update Photo</button>
+                  </div>
+                </div>
+
+                <div class="bbs-settings-wrapper">
+
+                  <div class="bbs-settings-section">
+                    <h3 class="bbs-section-title">Preferred Language</h3>
+                    <div class="bbs-radio-group">
+                      <label><input type="radio" name="language" value="en" checked /> English</label>
+                      <label><input type="radio" name="language" value="ar" /> Arabic</label>
+                    </div>
+                  </div>
+
+                  <div class="bbs-settings-section">
+                    <h3 class="bbs-section-title">Notification Settings</h3>
+                    <div class="bbs-checkbox-group">
+                      <label><input type="checkbox" value="email" checked /> Email</label>
+                      <label><input type="checkbox" value="whatsapp" /> WhatsApp</label>
+                      <label><input type="checkbox" value="push" /> Push Notifications</label>
+                    </div>
+                  </div>
+
+                  <div class="bbs-btn-wrapper">
+                    <button id="saveSettingsBtn" class="bbs-primary-btn">Save Settings</button>
+                  </div>
+
+                </div>
+              </div>
+            `);
+          this.initializeAccountSettings();
+          break;
+      }
+    };
+
+    $("#bbsMenu").off("click").on("click", "li", function () {
+      $("#bbsMenu li").removeClass("active");
+      $(this).addClass("active");
+
+      const view = $(this).attr("data-view");
+      if (view) {
+        localStorage.setItem("bbs_last_view", view);
+        loadView(view);
+      }
+    });
+
+    let startView = localStorage.getItem("bbs_last_view");
+    if (!startView) { startView = "about"; }
+
+    $("#bbsMenu li").removeClass("active");
+    $("#bbsMenu li[data-view='" + startView + "']").addClass("active");
+
+    loadView(startView);
+  }
+
+  private initializeAccountSettings(): void {
+
+    const user = this.context.pageContext.user;
+
+    $("#profileFullName").text(user.displayName);
+    $("#profileEmail").text(user.email);
+    $("#profileDepartment").text("Banking Operations"); // replace with real API later
+
+    const initials = user.displayName
+      .split(" ")
+      .map(n => n[0])
+      .join("")
+      .substring(0, 2)
+      .toUpperCase();
+
+    $("#bbsInitials").text(initials);
+
+    $("#saveSettingsBtn").on("click", () => {
+
+      const language = $("input[name='language']:checked").val();
+
+      const notifications: string[] = [];
+      $(".bbs-checkbox-group input:checked").each(function () {
+        notifications.push($(this).val() as string);
+      });
+
+      const payload = {
+        language,
+        notifications
+      };
+
+      console.log("Saving settings:", payload);
+
+      alert("Settings saved successfully");
+    });
+  }
+
+  private async renderAnnouncementsPreview(): Promise<void> {
+    const newsItems = await sp.web.lists.getByTitle("Site Pages").items.expand("Editor")
+      .select("*", "Editor/Title", "Editor/UserName", "FileRef").filter("PromotedState eq '2'").orderBy("ReleaseDate", false).top(5).get();
+
+    let html = `<div class="bbs-announcement-grid">`;
+
+    newsItems.forEach((item: any) => {
+
+      let banner = "";
+
+      if (item.BannerImageUrl) {
+        if (typeof item.BannerImageUrl === "string") {
+          try {
+            const parsed = JSON.parse(item.BannerImageUrl);
+            banner = parsed.serverRelativeUrl || parsed.Url || "";
+          } catch (e) {
+            banner = item.BannerImageUrl;
+          }
+        } else if (item.BannerImageUrl.Url) {
+          banner = item.BannerImageUrl.Url;
+        }
+      }
+
+      const title = item.Title;
+      const desc = item.Description ? item.Description : "";
+      const modifiedBy = item.Editor && item.Editor.Title ? item.Editor.Title : "";
+      const date = new Date(item.FirstPublishedDate).toLocaleDateString();
+      const newsUrl = item.FileRef;
+
+      html += `
+      <div class="bbs-announcement-card" data-url="${newsUrl}">
+        ${banner ? `<div class="bbs-announcement-image">
+            <img src="${banner}" />
+          </div>` : ""}
+        <div class="bbs-announcement-content">
+          <h4>${title}</h4>
+          <p class="bbs-announcement-desc">${desc}</p>
+          <div class="bbs-announcement-meta">
+            <span>Published: ${date}</span>
+            <span>Modified By: ${modifiedBy}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    });
+
+    html += `</div>`;
+
+    $("#bbsAnnouncementsPreview").html(html);
+    $(".bbs-announcement-card").on("click", function () {
+      const url = $(this).data("url");
+      window.location.href = url;
+    });
+  }
+
+  private bindViewAllNews(): void {
+    $("#bbsViewAllNews").on("click", () => {
+      window.location.href =
+        this.context.pageContext.web.absoluteUrl + "/SitePages/Forms/ByAuthor.aspx";
+      // Replace with your news page link if different
+    });
+  }
+
+  private renderSectionCards(
+    title: string,
+    cards: Array<{
+      key: string;
+      title: string;
+      description: string;
+      iconSvg: string;
+    }>
+  ): void {
+    let html = `
+    <div class="bbs-card">
+      <h3 class="bbs-section-title">${title}</h3>
+      <div class="bbs-feature-card-grid">
+  `;
+
+    cards.forEach((card) => {
+      html += `
+      <div class="bbs-feature-card" data-key="${card.key}">
+        <div class="bbs-feature-card-icon">
+          ${card.iconSvg}
+        </div>
+        <div class="bbs-feature-card-title">${card.title}</div>
+        <div class="bbs-feature-card-desc">${card.description}</div>
+      </div>
+    `;
+    });
+
+    html += `
+      </div>
+    </div>
+  `;
+
+    $("#bbsContentArea").html(html);
+  }
+
+  private bindSectionCards(parentView: string): void {
+    $("#bbsContentArea").off("click", ".bbs-feature-card");
+
+    $("#bbsContentArea").on("click", ".bbs-feature-card", (e) => {
+      const key = $(e.currentTarget).attr("data-key");
+
+      if (!key) {
+        return;
+      }
+
+      this.loadChildCardContent(parentView, key);
+    });
+  }
+
+  private loadChildCardContent(parentView: string, key: string): void {
+
+    if (parentView === "dashboard") {
+
+      if (key === "dashboard-pending-assignments") {
+        this.renderChildContentWithBack(
+          "dashboard",
+          "Pending Assignments",
+          "Pending Assignments",
+          `<p>Pending assignments with their status will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "dashboard-upcoming-trainings") {
+        this.renderChildContentWithBack(
+          "dashboard",
+          "Upcoming Trainings",
+          "Upcoming Trainings",
+          `<p>Upcoming trainings content will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "dashboard-pending-evaluations") {
+        this.renderChildContentWithBack(
+          "dashboard",
+          "Pending Evaluations",
+          "Pending Evaluations",
+          `<p>Pending evaluations content will appear here.</p>`
+        );
+        return;
+      }
+    }
+
+    if (parentView === "learning") {
+
+      if (key === "learning-journey") {
+        this.renderChildContentWithBack(
+          "learning",
+          "Learning Journey",
+          "Learning Journey",
+          `<p>Full training history will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "latest-training-opportunities") {
+        this.renderChildContentWithBack(
+          "learning",
+          "Latest Training Opportunities",
+          "Latest Training Opportunities",
+          `<p>List of all courses the user can apply to will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "learning-assignments") {
+        this.renderChildContentWithBack(
+          "learning",
+          "Assignments",
+          "Assignments",
+          `<p>Pending and completed assignments will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "learning-certificates") {
+        this.renderChildContentWithBack(
+          "learning",
+          "Certificates",
+          "Certificates",
+          `<p>Staff certifications available for download will appear here.</p>`
+        );
+        return;
+      }
+    }
+
+    if (parentView === "required") {
+
+      if (key === "required-assessment") {
+        this.renderChildContentWithBack(
+          "required",
+          "Required Assessment",
+          "Required Assessment",
+          `<p>Required assessments such as CBK, AML, and InfoSec will appear here.</p>`
+        );
+        return;
+      }
+
+      if (key === "required-training-evaluations") {
+        this.renderChildContentWithBack(
+          "required",
+          "Training Evaluations",
+          "Training Evaluations",
+          `<p>Evaluations pending from completed courses will appear here.</p>`
+        );
+        return;
+      }
+    }
+
+    if (parentView === "communication") {
+
+      if (key === "communication-announcements") {
+        this.renderChildContentWithBack(
+          "communication",
+          "Announcements",
+          "Announcements",
+          `<div id="bbsAnnouncementsPreview"></div>
+         <div class="bbs-announcement-footer">
+           <button id="bbsViewAllNews" class="bbs-secondary-btn">View All</button>
+         </div>`
+        );
+
+        this.renderAnnouncementsPreview();
+        this.bindViewAllNews();
+        return;
+      }
+
+      if (key === "communication-reviews") {
+        this.renderChildContentWithBack(
+          "communication",
+          "Reviews",
+          "Reviews",
+          `<div id="bbsReviewsGrid"></div>`
+        );
+
+        // this.renderReviews();
+        return;
+      }
+    }
+  }
+  // private showLearningCards(): void {
+
+  //   this.renderSectionCards("My Learning", [
+  //     {
+  //       key: "learning-journey",
+  //       title: "Learning Journey",
+  //       description: "Track your learning progress and development path.",
+  //       iconSvg: `
+  //       <svg viewBox="0 0 24 24" width="28" height="28">
+  //         <path d="M4 4h16v16H4z" fill="none" stroke="#c00000" stroke-width="2"/>
+  //       </svg>
+  //     `
+  //     },
+  //     {
+  //       key: "latest-training-opportunities",
+  //       title: "Latest Training Opportunities",
+  //       description: "Browse the latest available learning programs.",
+  //       iconSvg: `
+  //       <svg viewBox="0 0 24 24" width="28" height="28">
+  //         <circle cx="12" cy="12" r="9" fill="none" stroke="#c00000" stroke-width="2"/>
+  //       </svg>
+  //     `
+  //     },
+  //     {
+  //       key: "assignments",
+  //       title: "Assignments",
+  //       description: "Review pending and completed assignments.",
+  //       iconSvg: `
+  //       <svg viewBox="0 0 24 24" width="28" height="28">
+  //         <path d="M6 4h12v16H6z" fill="none" stroke="#c00000" stroke-width="2"/>
+  //       </svg>
+  //     `
+  //     },
+  //     {
+  //       key: "certificates",
+  //       title: "Certificates",
+  //       description: "Access issued course certificates.",
+  //       iconSvg: `
+  //       <svg viewBox="0 0 24 24" width="28" height="28">
+  //         <polygon points="12,2 22,8 12,14 2,8" fill="none" stroke="#c00000" stroke-width="2"/>
+  //       </svg>
+  //     `
+  //     }
+  //   ]);
+
+  //   this.bindSectionCards("learning");
+  // }
+  private showSectionCards(sectionKey: string): void {
+    const config = this._sectionConfigs[sectionKey];
+
+    if (!config) {
+      return;
+    }
+
+    this.renderSectionCards(config.title, config.cards);
+    this.bindSectionCards(sectionKey);
+  }
+
+  private renderChildContentWithBack(
+    parentSectionKey: string,
+    pageTitle: string,
+    sectionTitle: string,
+    bodyHtml: string
+  ): void {
+    $("#bbsPageTitle").text(pageTitle);
+
+    $("#bbsContentArea").html(`
+    <div class="bbs-card">
+      <div class="bbs-back-link" id="bbsBackLink">← Back</div>
+      <h3 class="bbs-section-title">${sectionTitle}</h3>
+      ${bodyHtml}
+    </div>
+  `);
+
+    $("#bbsBackLink").on("click", () => {
+      $("#bbsPageTitle").text(this._sectionConfigs[parentSectionKey].title);
+      this.showSectionCards(parentSectionKey);
+    });
+  }
+}
+
+
+==== CSS =====
+
+
+.bbs-layout {
+  width: 100%;
+  min-height: calc(100vh - 120px);
+  background: #edf0f3;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.bbs-subnav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  overflow-x: auto;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.bbs-subnav li {
+  position: relative;
+  padding: 16px 0 14px 0;
+  font-size: 14px;
+  color: #444;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.bbs-subnav li:hover {
+  color: #c00000;
+}
+
+.bbs-subnav li.active {
+  color: #c00000;
+  font-weight: 600;
+}
+
+.bbs-subnav li.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: #c00000;
+  border-radius: 2px;
+}
+
+/* thin horizontal scrollbar for menu */
+.bbs-subnav::-webkit-scrollbar {
+  height: 6px;
+}
+
+.bbs-subnav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bbs-subnav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+}
+
+.bbs-subnav:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.bbs-card {
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  padding: 40px;
+  position: relative;
+  z-index: 1;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.bbs-card-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+}
+
+.bbs-card-left {
+  flex: 0 0 60%;
+}
+
+.bbs-title {
+  font-size: 28px;
+  font-weight: 500;
+  color: #222;
+  margin-bottom: 20px;
+}
+
+.bbs-card-left p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #555;
+  margin-bottom: 15px;
+}
+
+.bbs-primary-btn {
+  background: #c00000;
+  color: #ffffff;
+  border: none;
+  min-width: 120px;
+  height: 36px;
+  padding: 0 22px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bbs-primary-btn:hover {
+  background: #a00000;
+}
+
+.bbs-card-right {
+  flex: 0 0 40%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: right;
+}
+
+.bbs-card-right img {
+  max-width: 420px;
+  width: 100%;
+  height: auto;
+}
+
+.bbs-btn-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.bbs-grid-wrapper {
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  padding: 20px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.bbs-avatar-circle {
+  width: 90px;
+  height: 90px;
+  background: #c00000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.bbs-avatar-circle span {
+  font-size: 32px;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.bbs-secondary-btn {
+  background: #ffffff;
+  border: 1px solid #c00000;
+  color: #c00000;
+  padding: 6px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.bbs-secondary-btn:hover {
+  background: #c00000;
+  color: #ffffff;
+}
+
+.bbs-settings-section:last-child {
+  border-bottom: none;
+}
+
+.bbs-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #222;
+}
+
+.bbs-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+}
+
+.bbs-photo-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.bbs-file-label {
+  height: 36px;
+  min-width: 120px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bbs-announcement-date {
+  font-size: 12px;
+  color: #777;
+}
+
+.bbs-announcement-footer {
+  margin-top: 20px;
+  text-align: right;
+}
+
+.bbs-announcement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 25px;
+}
+
+.bbs-announcement-card {
+  background: #ffffff;
+  border: 1px solid #e5e5e5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.bbs-announcement-card:hover {
+  border-color: #c00000;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+}
+
+.bbs-announcement-image img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+}
+
+.bbs-announcement-content {
+  padding: 18px;
+}
+
+.bbs-announcement-content h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #222;
+}
+
+.bbs-announcement-desc {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 15px;
+  line-height: 1.5;
+}
+
+.bbs-announcement-meta {
+  font-size: 12px;
+  color: #777;
+  display: flex;
+  justify-content: space-between;
+}
+
+.bbs-page-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 120px);
+  overflow: hidden;
+}
+
+.bbs-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 30px 30px 30px;
+  background: #edf0f3;
+  position: relative;
+  z-index: 1;
+}
+
+.bbs-feature-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+  margin-top: 10px;
+}
+
+.bbs-feature-card {
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  border-radius: 4px;
+  padding: 24px;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.bbs-feature-card:hover {
+  transform: translateY(-3px);
+  border-color: #c00000;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.bbs-feature-card-icon {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  color: #c00000;
+}
+
+.bbs-feature-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 8px;
+}
+
+.bbs-feature-card-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #666;
+}
+
+.bbs-back-link {
+  display: inline-block;
+  margin-bottom: 16px;
+  color: #c00000;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bbs-back-link:hover {
+  text-decoration: underline;
+}
+
+.bbs-profile-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+}
+
+.bbs-profile-value {
+  font-size: 14px;
+  color: #222;
+}
+
+.bbs-account-header {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 30px;
+  align-items: center;
+  padding-bottom: 30px;
+  border-bottom: 1px solid #ececec;
+  margin-bottom: 30px;
+}
+
+.bbs-account-left {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.bbs-account-middle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bbs-account-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: #222;
+}
+
+.bbs-account-email,
+.bbs-account-dept {
+  font-size: 14px;
+  color: #666;
+}
+
+.bbs-account-right {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.bbs-settings-wrapper {
+  max-width: 100%;
+  margin: 0;
+}
+
+.bbs-settings-section {
+  border-bottom: 1px solid #ececec;
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+}
+
+.bbs-radio-group,
+.bbs-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bbs-radio-group label,
+.bbs-checkbox-group label {
+  font-size: 14px;
+  color: #444;
+  cursor: pointer;
+}
+
+.bbs-file-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #c00000;
+  color: #c00000;
+  background: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.bbs-file-label:hover {
+  background: #c00000;
+  color: #ffffff;
+}
+
+.bbs-header-wrap {
+  background: #edf0f3;
+  border-bottom: 1px solid #dcdcdc;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  padding: 0 30px;
+}
+
+.bbs-header-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 32px;
+  min-height: 56px;
+
+}
+
+.bbs-header-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #222;
+  white-space: nowarap;
+  padding-bottom: 14px;
+}
