@@ -1,0 +1,857 @@
+using Microsoft.SharePoint;
+using Microsoft.SharePoint.Administration;
+using Microsoft.SharePoint.Utilities;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.OleDb;
+using System.IO;
+using System.Net;
+using System.Net.Mail;
+using System.Security;
+using System.Linq;
+
+namespace EPMSCloneYear.BulkUploadEventReceiver
+{
+	/// <summary>
+	/// List Item Events
+	/// </summary>
+	public class BulkUploadEventReceiver : SPItemEventReceiver
+	{
+		public override void ItemAdded(SPItemEventProperties properties)
+		{
+			base.ItemAdded(properties);
+		}
+
+		public override void ItemUpdated(SPItemEventProperties properties)
+		{
+			base.ItemUpdated(properties);
+
+			string afterStatus = Convert.ToString(properties.ListItem["Status"]);
+			string beforeStatus = properties.BeforeProperties != null && properties.BeforeProperties["Status"] != null
+				? Convert.ToString(properties.BeforeProperties["Status"])
+				: string.Empty;
+
+			// Process only when status changes TO Submitted
+			if (!string.Equals(afterStatus, "Submitted", StringComparison.OrdinalIgnoreCase) ||
+				string.Equals(beforeStatus, "Submitted", StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			string localFilePath = string.Empty;
+
+			try
+			{
+				SPSecurity.RunWithElevatedPrivileges(delegate ()
+				{
+					using (SPSite site = new SPSite(properties.SiteId))
+					using (SPWeb web = site.OpenWeb(properties.RelativeWebUrl))
+					{
+						web.AllowUnsafeUpdates = true;
+
+						try
+						{
+							SPList list = web.Lists[properties.ListId];
+							SPListItem currentItem = list.GetItemById(properties.ListItemId);
+
+							string originalLogin = !string.IsNullOrEmpty(properties.UserLoginName)
+								? properties.UserLoginName
+								: web.CurrentUser.LoginName;
+
+							SPUser originalUser = web.EnsureUser(originalLogin);
+							string notifyEmail = originalUser != null ? originalUser.Email : web.CurrentUser.Email;
+							string notifyName = originalUser != null ? originalUser.Name : web.CurrentUser.Name;
+
+							SPFieldLookupValue lookupYear = currentItem["Year"] != null
+								? new SPFieldLookupValue(Convert.ToString(currentItem["Year"]))
+								: null;
+
+							string selectedYear = lookupYear != null ? lookupYear.LookupValue : string.Empty;
+
+							/*
+							 * Initial:
+							 * A1 (Year), B1 (Category), C1 (SubCategory), D1 (KPIType), E1 (Weight), F1 (Baseline),
+							 * G1 (EndTarget), H1(TargetType), I1 (DesiredTo), J1 (Start), K1 (End),
+							 * L1 (EmployeeID), M1 (KPIDescription), N1 (WorkStep Objective),
+							 * O1 (WorkStep Percentage), P1 (WorkStep Champion), Q1 (WorkStep Start), R1 (WorkStep End)
+							 */
+
+							SPAttachmentCollection currentItemAttachments = currentItem.Attachments;
+							if (currentItemAttachments == null || currentItemAttachments.Count == 0)
+							{
+								updateStatus(currentItem, "Failed", 0, 0, 0);
+								sendEmail(web, notifyEmail, "Bulk upload failed", $"Dear {notifyName},<br/><br/>No attachment was found in the bulk upload item.");
+								return;
+							}
+
+							string attachment = currentItemAttachments[0];
+							string attachmentUrl = SPUrlUtility.CombineUrl(currentItem.Attachments.UrlPrefix, attachment);
+							SPFile file = web.GetFile(attachmentUrl);
+
+							if (file == null || !file.Exists)
+							{
+								updateStatus(currentItem, "Failed", 0, 0, 0);
+								sendEmail(web, notifyEmail, "Bulk upload failed", $"Dear {notifyName},<br/><br/>Attached file could not be found.");
+								return;
+							}
+
+							string filePath = file.Path.ToString();
+							string[] fileNameSplit = filePath.Split('/');
+							string fileName = fileNameSplit[fileNameSplit.Length - 1];
+							int lastIndex = fileName.LastIndexOf('.');
+							string fileExt = fileName.LastIndexOf('.') > -1 ? fileName.Substring(lastIndex + 1) : string.Empty;
+
+							localFilePath = $@"E:\Temp\{DateTime.Now.Ticks}_{fileName}";
+
+							using (FileStream fileStream = new FileStream(localFilePath, FileMode.Create, FileAccess.ReadWrite))
+							{
+								byte[] bArray = file.OpenBinary();
+								fileStream.Write(bArray, 0, bArray.Length);
+							}
+
+							if (string.IsNullOrEmpty(fileExt))
+							{
+								updateStatus(currentItem, "Failed", 0, 0, 0);
+								sendEmail(web, notifyEmail, "Bulk upload failed", $"Dear {notifyName},<br/><br/>Attached file extension is invalid.");
+								return;
+							}
+
+							if (!fileExt.Equals("xls", StringComparison.OrdinalIgnoreCase) &&
+								!fileExt.Equals("xlsx", StringComparison.OrdinalIgnoreCase))
+							{
+								updateStatus(currentItem, "Failed", 0, 0, 0);
+								sendEmail(web, notifyEmail, "Bulk upload failed", $"Dear {notifyName},<br/><br/>Only Excel files (.xls / .xlsx) are allowed.");
+								return;
+							}
+
+							string conn = string.Empty;
+							if (fileExt.Equals("xls", StringComparison.OrdinalIgnoreCase))
+							{
+								conn = @"provider=Microsoft.Jet.OLEDB.4.0;Data Source=" + localFilePath + ";Extended Properties='Excel 8.0;HDR=Yes;IMEX=1';";
+							}
+							else
+							{
+								conn = @"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + localFilePath + ";Extended Properties='Excel 12.0;HDR=YES;IMEX=1';";
+							}
+
+							SPList bulkUploadLog = null;
+							string worksheetName = string.Empty;
+							string uploadType = Convert.ToString(currentItem["UploadType"]);
+
+							if (uploadType == "Initial")
+							{
+								bulkUploadLog = web.Lists.TryGetList("BulkUploadLog");
+								worksheetName = "KPI";
+							}
+							else if (uploadType == "H1")
+							{
+								bulkUploadLog = web.Lists.TryGetList("BulkUploadH1Log");
+								worksheetName = "H1";
+							}
+							else if (uploadType == "H2")
+							{
+								bulkUploadLog = web.Lists.TryGetList("BulkUploadH2Log");
+								worksheetName = "H2";
+							}
+							else
+							{
+								updateStatus(currentItem, "Failed", 0, 0, 0);
+								sendEmail(web, notifyEmail, "Bulk upload failed", $"Dear {notifyName},<br/><br/>UploadType is invalid.");
+								return;
+							}
+
+							DataTable dtExcel = new DataTable();
+							using (OleDbConnection con = new OleDbConnection(conn))
+							{
+								OleDbDataAdapter oleAdpt = new OleDbDataAdapter($"select * from [{worksheetName}$]", con);
+								oleAdpt.Fill(dtExcel);
+							}
+
+							ValidateRequiredColumns(dtExcel, uploadType);
+
+							int j = 0;
+							HashSet<string> empIdKPIDescriptionHashSet = new HashSet<string>();
+							HashSet<string> empIdKPIDescriptionWSObjectiveHashSet = new HashSet<string>();
+
+							for (int i = 0; i < dtExcel.Rows.Count; i++)
+							{
+								string msg = string.Empty;
+								bool flag = false;
+
+								if (dtExcel.Columns.Contains("Errors") == false)
+								{
+									dtExcel.Columns.Add("Errors", typeof(string));
+								}
+
+								int parseYear;
+								string year = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "Year")) &&
+											  int.TryParse(GetCell(dtExcel.Rows[i], "Year"), out parseYear)
+									? GetCell(dtExcel.Rows[i], "Year")
+									: string.Empty;
+
+								SPList listYear = web.Lists.TryGetList("Year");
+								SPListItemCollection itemCollectionYear = checkYear(listYear, year);
+
+								flag = year == "" || selectedYear != year || itemCollectionYear.Count == 0;
+								if (flag)
+								{
+									j++;
+									msg += $"Year should be {selectedYear} and should be numeric.\r\n";
+									dtExcel.Rows[i]["Errors"] = msg;
+									updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+									continue;
+								}
+
+								if (uploadType == "Initial")
+								{
+									int parseEmployee;
+									string employee = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "EmployeeID")) &&
+													  int.TryParse(GetCell(dtExcel.Rows[i], "EmployeeID"), out parseEmployee)
+										? GetCell(dtExcel.Rows[i], "EmployeeID")
+										: "";
+
+									SPList listContract = web.Lists.TryGetList("Contract");
+									SPListItemCollection itemCollectionContract = checkContract(listContract, year, employee);
+									flag = employee == "" || itemCollectionContract.Count == 0;
+									if (flag)
+									{
+										j++;
+										msg += $"Employee is empty or employee contract stage is not planning and status not new or wrong employee id.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									string category = GetCell(dtExcel.Rows[i], "Category");
+									string subCategory = GetCell(dtExcel.Rows[i], "SubCategory");
+									string kpiType = GetCell(dtExcel.Rows[i], "KPIType");
+
+									SPList listCategory = web.Lists.TryGetList("Categories");
+									SPListItemCollection itemCollectionCategory = checkCategory(listCategory, year, category, subCategory, kpiType);
+
+									flag = category == "" || subCategory == "" || kpiType == "" || itemCollectionCategory.Count == 0;
+									if (flag)
+									{
+										j++;
+										msg += $"Category or Subcategory or KPI type is wrong or they are not matching. \r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									double parseWeight;
+									double weight = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "Weight")) &&
+													double.TryParse(GetCell(dtExcel.Rows[i], "Weight"), out parseWeight)
+										? Convert.ToDouble(GetCell(dtExcel.Rows[i], "Weight"))
+										: 0;
+
+									if (weight == 0)
+									{
+										j++;
+										msg += $"Weight cannot be empty or zero and should be numbers only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									bool endResultOverwrite = Convert.ToBoolean(itemCollectionCategory[0]["EndResultOverwrite"]);
+									flag = (!endResultOverwrite && weight <= 0) || (endResultOverwrite && weight >= 0);
+									if (flag)
+									{
+										j++;
+										string dynamicMsg = !endResultOverwrite ? " or less than zero" : " or greater than zero";
+										msg += $"Weight should be numeric and cannot be zero {dynamicMsg} for this {category}.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									string targetType = GetCell(dtExcel.Rows[i], "TargetType");
+									flag = targetType != "Accumulative" && targetType != "Maintenance";
+									if (flag)
+									{
+										j++;
+										msg += $"Wrong target type.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									string desireTo = GetCell(dtExcel.Rows[i], "DesiredTo");
+									flag = desireTo != "Decrease" && desireTo != "Increase";
+									if (flag)
+									{
+										j++;
+										msg += $"Wrong desired to.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									double parseBaseline, baseline = 0;
+									string strBaseline = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "Baseline")) &&
+														 double.TryParse(GetCell(dtExcel.Rows[i], "Baseline"), out parseBaseline)
+										? GetCell(dtExcel.Rows[i], "Baseline")
+										: "";
+									if (strBaseline == "")
+									{
+										j++;
+										msg += $"Baseline cannot be empty and should be numbers only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+									else
+									{
+										baseline = Convert.ToDouble(strBaseline);
+									}
+
+									double parseEndTarget, endTarget = 0;
+									string strEndTarget = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "EndTarget")) &&
+														  double.TryParse(GetCell(dtExcel.Rows[i], "EndTarget"), out parseEndTarget)
+										? GetCell(dtExcel.Rows[i], "EndTarget")
+										: "";
+									if (strEndTarget == "")
+									{
+										j++;
+										msg += $"End target cannot be empty and should be numbers only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+									else
+									{
+										endTarget = Convert.ToDouble(strEndTarget);
+									}
+
+									flag = (desireTo == "Increase" && endTarget <= baseline);
+									if (flag)
+									{
+										j++;
+										msg += $"When desire to value is increase than end target should be more than baseline.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									// Fixed logic
+									flag = kpiType == "Initiative" &&
+										   (endTarget != 100 || baseline != 0 || targetType != "Accumulative" || desireTo != "Increase");
+									if (flag)
+									{
+										j++;
+										msg += $"When KPtype value is Initiative than end target should be 100, baseline should be 0, target type should be Accumulative and desireTo should be Increase.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									flag = (desireTo == "Decrease" && endTarget >= baseline);
+									if (flag)
+									{
+										j++;
+										msg += $"When desire to value is decrease than end target should be less than baseline.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									int parseStart;
+									int start = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "Start")) &&
+												int.TryParse(GetCell(dtExcel.Rows[i], "Start"), out parseStart)
+										? Convert.ToInt16(GetCell(dtExcel.Rows[i], "Start"))
+										: 0;
+									if (start == 0)
+									{
+										j++;
+										msg += $"Start cannot be empty or zero and should be numbers only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									int parseEnd;
+									int end = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "End")) &&
+											  int.TryParse(GetCell(dtExcel.Rows[i], "End"), out parseEnd)
+										? Convert.ToInt16(GetCell(dtExcel.Rows[i], "End"))
+										: 0;
+									if (end == 0)
+									{
+										j++;
+										msg += $"End cannot be empty and should be numbers only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									flag = endResultOverwrite && (start != 4 || end != 4);
+									if (flag)
+									{
+										j++;
+										msg += $"{category} start and end should be Q4 only.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									flag = start == 0 || start > end;
+									if (flag)
+									{
+										j++;
+										msg += $"Start cannot be zero or start cannot be greater end.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									string kpiDescription = GetCell(dtExcel.Rows[i], "KPIDescription");
+									string keyKPI = $"{employee}:{NormalizeKey(kpiDescription)}";
+
+									SPList listkpiTypes = web.Lists.TryGetList("Types");
+									SPListItemCollection itemCollectionkpiTypes = checkKPIType(listkpiTypes, kpiType, year);
+
+									if (kpiDescription == "")
+									{
+										j++;
+										msg += $"KPI description cannot be empty.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									if (itemCollectionkpiTypes.Count == 0)
+									{
+										j++;
+										msg += $"KPI Type is invalid.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									bool isWorkStepType = Convert.ToBoolean(itemCollectionkpiTypes[0]["IsWorkStep"]);
+
+									if (empIdKPIDescriptionHashSet.Contains(keyKPI) && isWorkStepType == false)
+									{
+										j++;
+										msg += $"KPI description is duplicate in the excel file.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+									else
+									{
+										empIdKPIDescriptionHashSet.Add(keyKPI);
+									}
+
+									SPList listUserKPI = web.Lists.TryGetList("UserKPI");
+									SPListItemCollection itemUserKPI = checkUserKPI(listUserKPI, Convert.ToInt32(itemCollectionContract[0].ID), kpiDescription);
+									string workstepObjective = GetCell(dtExcel.Rows[i], "WorkStep Objective");
+
+									if (itemUserKPI.Count > 0 && isWorkStepType == false)
+									{
+										j++;
+										msg += $"KPI description is already in use for current year contract.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+									else if (itemUserKPI.Count > 0 && isWorkStepType == true)
+									{
+										SPList workStep = web.Lists.TryGetList("WorkStep");
+										SPListItemCollection itemWorkStep = checkWorkStep(workStep, itemUserKPI[0].ID, workstepObjective);
+
+										if (itemWorkStep.Count > 0)
+										{
+											j++;
+											msg += $"WorkStep description is already in exists for current UserKPI {"KPI" + String.Format("{0:00000}", Convert.ToInt32(itemUserKPI[0].ID))}.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+									}
+
+									int parseWorkstepStart, workstepStart = 0, parseWorkstepEnd, workstepEnd = 0;
+									double parseWorkstepPercentage, workstepPercentage = 0;
+
+									if (workstepObjective != "" && isWorkStepType)
+									{
+										string keyKPIWS = $"{employee}:{NormalizeKey(kpiDescription)}:{NormalizeKey(workstepObjective)}";
+
+										if (empIdKPIDescriptionWSObjectiveHashSet.Contains(keyKPIWS))
+										{
+											j++;
+											msg += $"KPI description and Workstep object is duplicate in the excel file.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+										else
+										{
+											empIdKPIDescriptionWSObjectiveHashSet.Add(keyKPIWS);
+										}
+
+										workstepPercentage = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep Percentage")) &&
+															 double.TryParse(GetCell(dtExcel.Rows[i], "WorkStep Percentage"), out parseWorkstepPercentage)
+											? Convert.ToDouble(GetCell(dtExcel.Rows[i], "WorkStep Percentage"))
+											: 0;
+										flag = workstepPercentage == 0 || workstepPercentage > 100;
+										if (flag)
+										{
+											j++;
+											msg += $"Percentage cannot be empty or zero or cannot be more than 100%.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+
+										workstepStart = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep Start")) &&
+														int.TryParse(GetCell(dtExcel.Rows[i], "WorkStep Start"), out parseWorkstepStart)
+											? Convert.ToInt16(GetCell(dtExcel.Rows[i], "WorkStep Start"))
+											: 0;
+										if (workstepStart == 0)
+										{
+											j++;
+											msg += $"Workstep start cannot be empty or zero and should be numbers only.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+
+										workstepEnd = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep End")) &&
+													  int.TryParse(GetCell(dtExcel.Rows[i], "WorkStep End"), out parseWorkstepEnd)
+											? Convert.ToInt16(GetCell(dtExcel.Rows[i], "WorkStep End"))
+											: 0;
+										if (workstepEnd == 0)
+										{
+											j++;
+											msg += $"Workstep end cannot be empty or zero and should be numbers only.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+
+										flag = (workstepStart < start) || (workstepEnd > end) || (workstepStart > workstepEnd);
+										if (flag)
+										{
+											j++;
+											msg += $"Worksteps start and end should between or equal to UserKPI start and end.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+											continue;
+										}
+									}
+									else if (workstepObjective == "" && isWorkStepType)
+									{
+										j++;
+										msg += $"This category needs worksteps.";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+									else if (workstepObjective != "" && isWorkStepType == false)
+									{
+										j++;
+										msg += $"Workstep objective is empty or {kpiType} cannot create worksteps.";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, uploadType);
+										continue;
+									}
+
+									if (flag == false)
+									{
+										SPFieldLookupValue lookupContract = new SPFieldLookupValue(itemCollectionContract[0].ID, itemCollectionContract[0].Title);
+										SPFieldLookupValue lookupCategory = new SPFieldLookupValue(itemCollectionCategory[0].ID, itemCollectionCategory[0].Title);
+										SPFieldLookupValue lookupSubCategory = new SPFieldLookupValue(itemCollectionCategory[0].ID, Convert.ToString(itemCollectionCategory[0]["SubCategory"]));
+										SPFieldLookupValue lookupKPIType = new SPFieldLookupValue(itemCollectionkpiTypes[0].ID, itemCollectionkpiTypes[0].Title);
+										IDictionary<string, double> target = targetCaluculation(desireTo, targetType, endTarget, baseline, Convert.ToInt16(start), Convert.ToInt16(end));
+
+										SPFieldLookupValue lookupUserKPIWorkStep;
+
+										if (itemUserKPI.Count == 0)
+										{
+											SPListItem itemUserKPIToAdd = listUserKPI.AddItem();
+											SPFieldLookupValue lookupEmployee = new SPFieldLookupValue(Convert.ToString(itemCollectionContract[0]["Employee"]));
+
+											itemUserKPIToAdd["Contract"] = lookupContract;
+											itemUserKPIToAdd["Category"] = lookupCategory;
+											itemUserKPIToAdd["SubCategory"] = lookupSubCategory;
+											itemUserKPIToAdd["KPIType"] = lookupKPIType;
+											itemUserKPIToAdd["KPIDescription"] = kpiDescription;
+											itemUserKPIToAdd["Weight"] = weight;
+											itemUserKPIToAdd["Baseline"] = baseline;
+											itemUserKPIToAdd["EndTarget"] = endTarget;
+											itemUserKPIToAdd["TargetType"] = targetType;
+											itemUserKPIToAdd["DesiredTo"] = desireTo;
+											itemUserKPIToAdd["Start"] = start;
+											itemUserKPIToAdd["End"] = end;
+											itemUserKPIToAdd["isDeleted"] = false;
+											itemUserKPIToAdd["TargetQ1"] = target["TargetQ1"];
+											itemUserKPIToAdd["ActualQ1"] = null;
+											itemUserKPIToAdd["PerformanceQ1"] = null;
+											itemUserKPIToAdd["TargetQ2"] = target["TargetQ2"];
+											itemUserKPIToAdd["ActualQ2"] = null;
+											itemUserKPIToAdd["PerformanceQ2"] = null;
+											itemUserKPIToAdd["TargetQ3"] = target["TargetQ3"];
+											itemUserKPIToAdd["ActualQ3"] = null;
+											itemUserKPIToAdd["PerformanceQ3"] = null;
+											itemUserKPIToAdd["TargetQ4"] = target["TargetQ4"];
+											itemUserKPIToAdd["ActualQ4"] = null;
+											itemUserKPIToAdd["PerformanceQ4"] = null;
+											itemUserKPIToAdd["IsCorporate"] = false;
+											itemUserKPIToAdd["Employee"] = lookupEmployee;
+											itemUserKPIToAdd["Year"] = year;
+
+											itemUserKPIToAdd.Update();
+
+											using (EventReceiverManager eventReceiverManager = new EventReceiverManager(true))
+											{
+												itemUserKPIToAdd["KPIID"] = "KPI" + String.Format("{0:00000}", itemUserKPIToAdd.ID);
+												itemUserKPIToAdd.Update();
+											}
+
+											lookupUserKPIWorkStep = new SPFieldLookupValue(itemUserKPIToAdd.ID, "KPI" + String.Format("{0:00000}", itemUserKPIToAdd.ID));
+										}
+										else
+										{
+											lookupUserKPIWorkStep = new SPFieldLookupValue(Convert.ToInt32(itemUserKPI[0].ID), "KPI" + String.Format("{0:00000}", Convert.ToInt32(itemUserKPI[0].ID)));
+										}
+
+										if (workstepObjective != "" && isWorkStepType)
+										{
+											SPList listWorkStep = web.Lists.TryGetList("WorkStep");
+											SPListItem itemWorkStepToAdd = listWorkStep.AddItem();
+											IDictionary<string, double> targetWorkstep = targetCaluculation(desireTo, targetType, endTarget, baseline, Convert.ToInt16(workstepStart), Convert.ToInt16(workstepEnd));
+
+											itemWorkStepToAdd["UserKPI"] = lookupUserKPIWorkStep;
+											itemWorkStepToAdd["Title"] = workstepObjective;
+											itemWorkStepToAdd["Percentage"] = workstepPercentage;
+											itemWorkStepToAdd["Start"] = workstepStart;
+											itemWorkStepToAdd["End"] = workstepEnd;
+											itemWorkStepToAdd["TargetQ1"] = Math.Round((targetWorkstep["TargetQ1"] * workstepPercentage) / 100, 2);
+											itemWorkStepToAdd["TargetQ2"] = Math.Round((targetWorkstep["TargetQ2"] * workstepPercentage) / 100, 2);
+											itemWorkStepToAdd["TargetQ3"] = Math.Round((targetWorkstep["TargetQ3"] * workstepPercentage) / 100, 2);
+											itemWorkStepToAdd["TargetQ4"] = Math.Round((targetWorkstep["TargetQ4"] * workstepPercentage) / 100, 2);
+											itemWorkStepToAdd.Update();
+										}
+									}
+								}
+								else if (uploadType == "H1")
+								{
+									string currentUserName = originalLogin;
+									bool checkSysAdmin = IsMember(web, currentUserName, "EPMS Admin");
+
+									int parseEmployee;
+									string employee = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "EmployeeID")) &&
+													  int.TryParse(GetCell(dtExcel.Rows[i], "EmployeeID"), out parseEmployee)
+										? GetCell(dtExcel.Rows[i], "EmployeeID")
+										: "";
+
+									SPList listContract = web.Lists.TryGetList("Contract");
+									SPListItemCollection itemCollectionContract = checkContractPeriod(listContract, year, employee, "EligibleH1", checkSysAdmin);
+									flag = employee == "" || itemCollectionContract.Count == 0;
+									if (flag)
+									{
+										j++;
+										msg += $"Employee is empty or wrong employee id or not eligible for H1 update.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									SPList listUserKPI = web.Lists.TryGetList("UserKPI");
+									string kpiID = GetCell(dtExcel.Rows[i], "KPIID");
+									SPListItemCollection itemUserKPI = getUserKPIPeriod(listUserKPI, Convert.ToInt32(itemCollectionContract[0].ID), kpiID);
+
+									flag = kpiID == "" || itemUserKPI.Count == 0;
+									if (flag)
+									{
+										j++;
+										msg += $"KPI ID is empty or wrong KPI ID.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									SPList listCategories = web.Lists.TryGetList("Categories");
+									SPFieldLookupValue lookupCategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI[0]["Category"]));
+									SPListItem itemCategories = listCategories.GetItemById(lookupCategory.LookupId);
+									SPFieldLookupValue ownedBy = new SPFieldLookupValue(Convert.ToString(itemCategories["OwnedBy"]));
+									flag = ownedBy.LookupValue != "All";
+									if (flag)
+									{
+										j++;
+										msg += $"KPI category cannot be updated using bulk upload.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									SPFieldLookupValue isWorkStepString = new SPFieldLookupValue(Convert.ToString(itemUserKPI[0]["KPIType_x003a_IsWorkStepString"]));
+									flag = isWorkStepString.LookupValue == "true" &&
+										  (!string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ1")) || !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ2")));
+									if (flag)
+									{
+										j++;
+										msg += $"You cannot update actuals where KPI type needs worksteps.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									double parseActualQ1, actualQ1 = 0, parseActualQ2, actualQ2 = 0;
+									flag = Convert.ToInt16(itemUserKPI[0]["Start"]) > 2;
+									if (flag)
+									{
+										j++;
+										msg += $"Actual values cannot be updated as start of KPI period not within Q1 and Q2.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									flag = isWorkStepString.LookupValue == "false" &&
+										   string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ1")) &&
+										   string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ2"));
+									if (flag)
+									{
+										j++;
+										msg += $"Q1 and Q2 both cannot be empty, at least one of it should be filled.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+									else if (!string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ1")) && !double.TryParse(GetCell(dtExcel.Rows[i], "ActualQ1"), out parseActualQ1))
+									{
+										j++;
+										msg += $"Q1 not a number.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+									else if (!string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ2")) && !double.TryParse(GetCell(dtExcel.Rows[i], "ActualQ2"), out parseActualQ2))
+									{
+										j++;
+										msg += $"Q2 not a number.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+
+									string strActualQ1 = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ1")) &&
+														 double.TryParse(GetCell(dtExcel.Rows[i], "ActualQ1"), out parseActualQ1)
+										? GetCell(dtExcel.Rows[i], "ActualQ1")
+										: "";
+									string strActualQ2 = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "ActualQ2")) &&
+														 double.TryParse(GetCell(dtExcel.Rows[i], "ActualQ2"), out parseActualQ2)
+										? GetCell(dtExcel.Rows[i], "ActualQ2")
+										: "";
+
+									flag = Convert.ToInt16(itemUserKPI[0]["Start"]) > 1 && strActualQ1 != "";
+									if (flag)
+									{
+										j++;
+										msg += $"ActualQ1 cannot be updated as start of KPI period not Quater1.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+									else
+									{
+										actualQ1 = strActualQ1 == "" ? 0 : Convert.ToDouble(strActualQ1);
+									}
+
+									flag = (Convert.ToInt16(itemUserKPI[0]["Start"]) > 2 || Convert.ToInt16(itemUserKPI[0]["End"]) < 2) && strActualQ2 != "";
+									if (flag)
+									{
+										j++;
+										msg += $"ActualQ2 cannot be updated as start or end of KPI period not Quater2.\r\n";
+										dtExcel.Rows[i]["Errors"] = msg;
+										updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+										continue;
+									}
+									else
+									{
+										actualQ2 = strActualQ2 == "" ? 0 : Convert.ToDouble(strActualQ2);
+									}
+
+									string workstepObjective = GetCell(dtExcel.Rows[i], "WorkStep Objective");
+									SPList listWorkStep = web.Lists.TryGetList("WorkStep");
+									string strWorkStepActualQ1 = "", strWorkStepActualQ2 = "";
+									double parseWorkStepActualQ1, workStepActualQ1 = 0, parseWorkStepActualQ2, workStepActualQ2 = 0;
+									SPListItemCollection itemWorkStep = null;
+
+									if (isWorkStepString.LookupValue == "true")
+									{
+										flag = workstepObjective == "";
+										if (flag)
+										{
+											j++;
+											msg += $"WorkStep objective cannot be empty.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+
+										itemWorkStep = checkWorkStep(listWorkStep, itemUserKPI[0].ID, workstepObjective);
+
+										if (itemWorkStep.Count == 0)
+										{
+											j++;
+											msg += $"WorkStep objective is does not exists for current UserKPI {"KPI" + String.Format("{0:00000}", Convert.ToInt32(itemUserKPI[0].ID))}.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+
+										flag = string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ1")) &&
+											   string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ2"));
+										if (flag)
+										{
+											j++;
+											msg += $"WorkStep ActualQ1 and ActualQ2 both cannot be empty, at least one of it should be filled.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+										else if (!string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ1")) && !double.TryParse(GetCell(dtExcel.Rows[i], "WorkStep ActualQ1"), out parseWorkStepActualQ1))
+										{
+											j++;
+											msg += $"WorkStep ActualQ1 not a number.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+										else if (!string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ2")) && !double.TryParse(GetCell(dtExcel.Rows[i], "WorkStep ActualQ2"), out parseWorkStepActualQ2))
+										{
+											j++;
+											msg += $"WorkStep ActualQ2 not a number.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+
+										strWorkStepActualQ1 = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ1")) &&
+															  double.TryParse(GetCell(dtExcel.Rows[i], "WorkStep ActualQ1"), out parseWorkStepActualQ1)
+											? GetCell(dtExcel.Rows[i], "WorkStep ActualQ1")
+											: "";
+										strWorkStepActualQ2 = !string.IsNullOrEmpty(GetCell(dtExcel.Rows[i], "WorkStep ActualQ2")) &&
+															  double.TryParse(GetCell(dtExcel.Rows[i], "WorkStep ActualQ2"), out parseWorkStepActualQ2)
+											? GetCell(dtExcel.Rows[i], "WorkStep ActualQ2")
+											: "";
+
+										flag = Convert.ToInt16(itemWorkStep[0]["Start"]) > 1 && strWorkStepActualQ1 != "";
+										if (flag)
+										{
+											j++;
+											msg += $"WorkStep ActualQ1 cannot be updated as start of WorkStep period not Quater1.\r\n";
+											dtExcel.Rows[i]["Errors"] = msg;
+											updateBulkUploadlog(bulkUploadLog, dtExcel.Rows[i], currentItem.ID, "H1");
+											continue;
+										}
+										else
+										{
+											workStepActualQ1 = strWorkStepActualQ1 == "" ? 0 : Convert.ToDouble(strWorkStepActualQ1);
+										}
+
+										flag = (Convert.ToInt16(itemWorkStep[0]["Start"]) > 2 || Convert.ToInt
