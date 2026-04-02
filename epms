@@ -1,4 +1,3 @@
-
 using Microsoft.SharePoint;
 using Microsoft.SharePoint.Administration;
 using Microsoft.SharePoint.Utilities;
@@ -116,17 +115,17 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 								String worksheetName = "";
 								if (Convert.ToString(currentItem["UploadType"]) == "Initial")
 								{
-									bulkUploadLog = properties.Web.Lists.TryGetList("BulkUploadLog");
+									bulkUploadLog = web.Lists.TryGetList("BulkUploadLog");
 									worksheetName = "KPI";
 								}
 								else if (Convert.ToString(currentItem["UploadType"]) == "H1")
 								{
-									bulkUploadLog = properties.Web.Lists.TryGetList("BulkUploadH1Log");
+									bulkUploadLog = web.Lists.TryGetList("BulkUploadH1Log");
 									worksheetName = "H1";
 								}
 								else if (Convert.ToString(currentItem["UploadType"]) == "H2")
 								{
-									bulkUploadLog = properties.Web.Lists.TryGetList("BulkUploadH2Log");
+									bulkUploadLog = web.Lists.TryGetList("BulkUploadH2Log");
 									worksheetName = "H2";
 								}
 
@@ -156,7 +155,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 
 									int parseYear;
 									string year = !string.IsNullOrEmpty(dtExcel.Rows[i]["Year"].ToString()) && int.TryParse(dtExcel.Rows[i]["Year"].ToString(), out parseYear) ? Convert.ToString(dtExcel.Rows[i]["Year"].ToString()) : "";
-									SPList listYear = properties.Web.Lists.TryGetList("Year");
+									SPList listYear = web.Lists.TryGetList("Year");
 									SPListItemCollection itemCollectionYear = checkYear(listYear, year);
 									flag = year == "" || currentYear != year || itemCollectionYear.Count == 0;
 
@@ -174,7 +173,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 									{
 										int parseEmployee;
 										string employee = !string.IsNullOrEmpty(dtExcel.Rows[i]["EmployeeID"].ToString()) && int.TryParse(dtExcel.Rows[i]["EmployeeID"].ToString(), out parseEmployee) ? dtExcel.Rows[i]["EmployeeID"].ToString() : "";
-										SPList listContract = properties.Web.Lists.TryGetList("Contract");
+										SPList listContract = web.Lists.TryGetList("Contract");
 										SPListItemCollection itemCollectionContract = checkContract(listContract, year, employee);
 										flag = employee == "" || itemCollectionContract.Count == 0;
 										if (flag == true)
@@ -190,7 +189,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 										string category = string.IsNullOrEmpty(dtExcel.Rows[i]["Category"].ToString()) ? "" : dtExcel.Rows[i]["Category"].ToString();
 										string subCategory = string.IsNullOrEmpty(dtExcel.Rows[i]["SubCategory"].ToString()) ? "" : dtExcel.Rows[i]["SubCategory"].ToString();
 										string kpiType = string.IsNullOrEmpty(dtExcel.Rows[i]["KPIType"].ToString()) ? "" : dtExcel.Rows[i]["KPIType"].ToString();
-										SPList listCategory = properties.Web.Lists.TryGetList("Categories");
+										SPList listCategory = web.Lists.TryGetList("Categories");
 										SPListItemCollection itemCollectionCategory = checkCategory(listCategory, year, category, subCategory, kpiType);
 										flag = category == "" || subCategory == "" || kpiType == "" || itemCollectionCategory.Count == 0;
 										if (flag == true)
@@ -368,7 +367,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 
 										string kpiDescription = !string.IsNullOrEmpty(dtExcel.Rows[i]["KPIDescription"].ToString()) ? dtExcel.Rows[i]["KPIDescription"].ToString() : "";
 										string keyKPI = $"{employee}:{NormalizeKey(kpiDescription)}";
-										SPList listkpiTypes = properties.Web.Lists.TryGetList("Types");
+										SPList listkpiTypes = web.Lists.TryGetList("Types");
 										SPListItemCollection itemCollectionkpiTypes = checkKPIType(listkpiTypes, kpiType, year);
 
 										if (kpiDescription == "")
@@ -397,7 +396,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											empIdKPIDescriptionHashSet.Add(keyKPI);
 										}
 
-										SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+										SPList listUserKPI = web.Lists.TryGetList("UserKPI");
 										SPListItemCollection itemUserKPI = checkUserKPI(listUserKPI, Convert.ToInt32(itemCollectionContract[0].ID), kpiDescription);
 										string workstepObjective = string.IsNullOrEmpty(dtExcel.Rows[i]["WorkStep Objective"].ToString()) ? "" : dtExcel.Rows[i]["WorkStep Objective"].ToString();
 
@@ -413,7 +412,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 										}
 										else if (itemUserKPI.Count > 0 && Convert.ToBoolean(itemCollectionkpiTypes[0]["IsWorkStep"]) == true)
 										{
-											SPList workStep = properties.Web.Lists.TryGetList("WorkStep");
+											SPList workStep = web.Lists.TryGetList("WorkStep");
 											SPListItemCollection itemWorkStep = checkWorkStep(workStep, itemUserKPI[0].ID, workstepObjective);
 
 											if (itemWorkStep.Count > 0)
@@ -576,7 +575,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 
 											if (workstepObjective != "" && Convert.ToBoolean(itemCollectionkpiTypes[0]["IsWorkStep"]))
 											{
-												SPList listWorkStep = properties.Web.Lists.TryGetList("WorkStep");
+												SPList listWorkStep = web.Lists.TryGetList("WorkStep");
 												SPListItem itemWorkStepToAdd = listWorkStep.AddItem();
 												IDictionary<string, double> targetWorkstep = targetCaluculation(desireTo, targetType, endTarget, baseline, Convert.ToInt16(workstepStart), Convert.ToInt16(workstepEnd)); //Check Calculation
 
@@ -598,11 +597,11 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 									}
 									else if (Convert.ToString(currentItem["UploadType"]) == "H1")
 									{
-										string currentUserName = properties.Web.CurrentUser.LoginName;
+										string currentUserName = web.CurrentUser.LoginName;
 										bool checkSysAdmin = IsMember(web, currentUserName, "EPMS Admin");
 										int parseEmployee;
 										string employee = !string.IsNullOrEmpty(dtExcel.Rows[i]["EmployeeID"].ToString()) && int.TryParse(dtExcel.Rows[i]["EmployeeID"].ToString(), out parseEmployee) ? dtExcel.Rows[i]["EmployeeID"].ToString() : "";
-										SPList listContract = properties.Web.Lists.TryGetList("Contract");
+										SPList listContract = web.Lists.TryGetList("Contract");
 										SPListItemCollection itemCollectionContract = checkContractPeriod(listContract, year, employee, "EligibleH1", checkSysAdmin);
 										flag = employee == "" || itemCollectionContract.Count == 0;
 										if (flag == true)
@@ -615,7 +614,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											continue;
 										}
 
-										SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+										SPList listUserKPI = web.Lists.TryGetList("UserKPI");
 										string kpiID = string.IsNullOrEmpty(dtExcel.Rows[i]["KPIID"].ToString()) ? "" : dtExcel.Rows[i]["KPIID"].ToString();
 										SPListItemCollection itemUserKPI = getUserKPIPeriod(listUserKPI, Convert.ToInt32(itemCollectionContract[0].ID), kpiID);
 
@@ -630,7 +629,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											continue;
 										}
 
-										SPList listCategories = properties.Web.Lists.TryGetList("Categories");
+										SPList listCategories = web.Lists.TryGetList("Categories");
 										SPFieldLookupValue lookupCategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI[0]["Category"]));
 										SPListItem itemCategories = listCategories.GetItemById(lookupCategory.LookupId);
 										SPFieldLookupValue ownedBy = new SPFieldLookupValue(Convert.ToString(itemCategories["OwnedBy"]));
@@ -737,7 +736,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 										/**/
 
 										string workstepObjective = string.IsNullOrEmpty(Convert.ToString(dtExcel.Rows[i]["WorkStep Objective"])) ? "" : Convert.ToString(dtExcel.Rows[i]["WorkStep Objective"]);
-										SPList listWorkStep = properties.Web.Lists.TryGetList("WorkStep");
+										SPList listWorkStep = web.Lists.TryGetList("WorkStep");
 										string strWorkStepActualQ1 = "", strWorkStepActualQ2 = "";
 										double parseWorkStepActualQ1, workStepActualQ1 = 0, parseWorkStepActualQ2, workStepActualQ2 = 0;
 										SPListItemCollection itemWorkStep = null;
@@ -894,7 +893,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											double targetQ1 = Convert.ToDouble(itemUserKPI[0]["TargetQ1"]);
 											double targetQ2 = Convert.ToDouble(itemUserKPI[0]["TargetQ2"]);
 
-											SPList listKPIType = properties.Web.Lists.TryGetList("Types");
+											SPList listKPIType = web.Lists.TryGetList("Types");
 											SPListItem itemKPIType = listKPIType.GetItemById(lookupKPIType.LookupId);
 											double performanceCapping = Convert.ToDouble(itemKPIType["PerformanceCapping"]);
 
@@ -928,12 +927,12 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 									}
 									else if (Convert.ToString(currentItem["UploadType"]) == "H2")
 									{
-										string currentUserName = properties.Web.CurrentUser.LoginName;
+										string currentUserName = web.CurrentUser.LoginName;
 										bool checkSysAdmin = IsMember(web, currentUserName, "EPMS Admin");
 
 										int parseEmployee;
 										string employee = !string.IsNullOrEmpty(dtExcel.Rows[i]["EmployeeID"].ToString()) && int.TryParse(dtExcel.Rows[i]["EmployeeID"].ToString(), out parseEmployee) ? dtExcel.Rows[i]["EmployeeID"].ToString() : "";
-										SPList listContract = properties.Web.Lists.TryGetList("Contract");
+										SPList listContract = web.Lists.TryGetList("Contract");
 										SPListItemCollection itemCollectionContract = checkContractPeriod(listContract, year, employee, "EligibleH2", checkSysAdmin);
 										flag = employee == "" || itemCollectionContract.Count == 0;
 										if (!checkSysAdmin)
@@ -949,7 +948,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											}
 										}
 
-										SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+										SPList listUserKPI = web.Lists.TryGetList("UserKPI");
 										string kpiID = string.IsNullOrEmpty(dtExcel.Rows[i]["KPIID"].ToString()) ? "" : dtExcel.Rows[i]["KPIID"].ToString();
 										SPListItemCollection itemUserKPI = getUserKPIPeriod(listUserKPI, Convert.ToInt32(itemCollectionContract[0].ID), kpiID);
 										flag = kpiID == "" || itemUserKPI.Count == 0;
@@ -963,7 +962,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											continue;
 										}
 
-										SPList listCategories = properties.Web.Lists.TryGetList("Categories");
+										SPList listCategories = web.Lists.TryGetList("Categories");
 										SPFieldLookupValue lookupCategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI[0]["Category"]));
 										SPListItem itemCategories = listCategories.GetItemById(lookupCategory.LookupId);
 										SPFieldLookupValue ownedBy = new SPFieldLookupValue(Convert.ToString(itemCategories["OwnedBy"]));
@@ -1070,7 +1069,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 										/**/
 
 										string workstepObjective = string.IsNullOrEmpty(Convert.ToString(dtExcel.Rows[i]["WorkStep Objective"])) ? "" : Convert.ToString(dtExcel.Rows[i]["WorkStep Objective"]);
-										SPList listWorkStep = properties.Web.Lists.TryGetList("WorkStep");
+										SPList listWorkStep = web.Lists.TryGetList("WorkStep");
 										double parseWorkStepActualQ3, workStepActualQ3 = 0, parseWorkStepActualQ4, workStepActualQ4 = 0;
 										string strWorkStepActualQ3 = "", strWorkStepActualQ4 = "";
 										SPListItemCollection itemWorkStep = null;
@@ -1226,7 +1225,7 @@ namespace EPMSCloneYear.BulkUploadEventReceiver
 											double targetQ3 = Convert.ToDouble(itemUserKPI[0]["TargetQ3"]);
 											double targetQ4 = Convert.ToDouble(itemUserKPI[0]["TargetQ4"]);
 
-											SPList listKPIType = properties.Web.Lists.TryGetList("Types");
+											SPList listKPIType = web.Lists.TryGetList("Types");
 											SPListItem itemKPIType = listKPIType.GetItemById(lookupKPIType.LookupId);
 											double performanceCapping = Convert.ToDouble(itemKPIType["PerformanceCapping"]);
 
