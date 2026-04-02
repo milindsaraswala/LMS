@@ -1,881 +1,764 @@
-import { uniqBy } from "@microsoft/sp-lodash-subset";
-import { WebPartContext } from "@microsoft/sp-webpart-base";
-import { SPBatch, sp } from "@pnp/sp";
-import { IAttachmentInfo } from "@pnp/sp/attachments";
-import { IItem } from "@pnp/sp/items";
-import * as ExcelJS from "exceljs";
-import * as saveAs from "file-saver";
-import { IResults, blob, fileUploadToItem, getCurrentContractEmployee, getCurrentUserGroups, getData, renameObjectKey, wrapBatchPromise } from "../../util";
+using Microsoft.SharePoint;
+using System;
 
-const createKPISheet = async (selectedContractYear: number) => {
-	const year = await sp.web.lists.getByTitle("Year").items.select("Title").getById(selectedContractYear).get();
+namespace EPMSCloneYear.UserKPIEventReceiver
+{
+	/// <summary>
+	/// List Item Events
+	/// </summary>
+	public class UserKPIEventReceiver : SPItemEventReceiver
+	{
+		/// <summary>
+		/// An item was added.
+		/// </summary>
+		public override void ItemAdded(SPItemEventProperties properties)
+		{
+			base.ItemAdded(properties);
 
-	const KPISheet = [{
-		"Year": year ? year.Title : "",
-		"EmployeeID": "",
-		"KPIDescription": "",
-		"Category": "",
-		"SubCategory": "",
-		"KPIType": "",
-		"Weight": "",
-		"Baseline": "",
-		"EndTarget": "",
-		"TargetType": "Accumulative, Maintenance",
-		"DesiredTo": "Decrease, Increase",
-		"Start": "1,2,3,4",
-		"End": "1,2,3,4",
-		"WorkStep Objective": "",
-		"WorkStep Percentage": "",
-		"WorkStep Start": "1,2,3,4",
-		"WorkStep End": "1,2,3,4"
-	}];
+			SPSecurity.RunWithElevatedPrivileges(delegate ()
+			{
+				properties.Web.AllowUnsafeUpdates = true;
 
-	return KPISheet;
-};
+				using (SPWeb web = properties.OpenWeb())
+				{
+					try
+					{
+						SPListItem currentItem = properties.ListItem;
 
-const getSelectedYearCategories = async (selectedContractYear: number) => {
-	const jsonCategories = [];
-	const categories = await sp.web.lists
-		.getByTitle("Categories")
-		.items
-		.filter(`YearId eq ${selectedContractYear} and isDeleted eq false`)
-		.select("Title", "SubCategory", "Year/Title", "KPIType/Title")
-		.expand("Year", "KPIType")
-		.get();
+						SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+						SPFieldLookupValue lookupContract = new SPFieldLookupValue(Convert.ToString(currentItem["Contract"]));
+						SPListItemCollection itemsUserKPI = getUserKPI(listUserKPI, lookupContract.LookupId); // Get  All UserKPI for selected contract
 
-	categories.forEach((item) => {
-		jsonCategories.push({
-			Category: item.Title,
-			SubCategory: item.SubCategory,
-			KPIType: item.KPIType.map(itm => itm.Title).join("; "),
-			Year: item.Year.Title,
-		});
+						SPList listContract = properties.Web.Lists.TryGetList("Contract");
+						SPListItem itemContract = listContract.GetItemById(lookupContract.LookupId);
+						SPFieldLookupValue lookupEmployee = new SPFieldLookupValue(Convert.ToString(itemContract["Employee"]));
 
-	});
+						decimal kpiPerformanceQ1 = 0, kpiPerformanceQ2 = 0, kpiPerformanceQ3 = 0, kpiPerformanceQ4 = 0;
+						decimal kpiCappingQ1 = 0, kpiCappingQ2 = 0, kpiCappingQ3 = 0, kpiCappingQ4 = 0;
+						decimal endNegativeResult = 0;
 
-	return jsonCategories;
-};
+						SPList listCategories = properties.Web.Lists.TryGetList("Categories");
+						//SPList listKPIType = properties.Web.Lists.TryGetList("Types");
 
-const getBulkLogData = async (listName: string, bulkUploadId: number) => {
-	return await sp.web.lists
-		.getByTitle(listName)
-		.items
-		.filter(`BulkUploadFileId eq ${bulkUploadId}`)
-		.get();
-};
+						int lowestStart = 4; // done for new joiner
 
-export const bluckUpload = async (selectedContract: number, selectedContractYear: number, context: WebPartContext) => {
-	const loadPanel = $(`#indicator`).dxLoadPanel({
-		shadingColor: "rgba(0,0,0,0.4)",
-		position: { of: "#content" },
-		visible: false,
-		showIndicator: true,
-		showPane: true,
-		shading: true,
-		closeOnOutsideClick: false,
-	}).dxLoadPanel("instance");
+						foreach (SPListItem itemUserKPI in itemsUserKPI) // Loop all UserKPI based on selected KPI to Update performance in contract
+						{
+							SPFieldLookupValue category = new SPFieldLookupValue(Convert.ToString(itemUserKPI["Category"]));
+							SPFieldLookupValue subcategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI["SubCategory"]));
+							SPFieldLookupValue kpiType = new SPFieldLookupValue(Convert.ToString(itemUserKPI["KPIType"]));
 
-	const lblTabs = [
-		{ text: "Upload Process" },
-		{ text: "My Upload History" }];
+							SPFieldLookupValue year = new SPFieldLookupValue(Convert.ToString(itemContract["Year"]));
 
-	const currentUserGroup = await getCurrentUserGroups();
-	const isMember = currentUserGroup.indexOf("EPMS Admin") > -1;
-	const selectedYearItem = await sp.web.lists.getByTitle("Year").items.getById(selectedContractYear).get();
-	const selectedYearValue = selectedYearItem.Title;
+							SPListItemCollection itemsCategory = getCategory(listCategories, Convert.ToString(category.LookupValue), Convert.ToString(subcategory.LookupValue), Convert.ToString(year.LookupValue));
+							//SPListItem itemKPIType = listKPIType.GetItemById(kpiType.LookupId); <!-- Done Cause of Capping Change -->
 
-	const html =
-		`<div class="row">
-				<h3>
-					<small class="text-muted">Bulk Upload KPI</small>
-				</h3>
-			</div>
-			<div class="row mt-5 mb-3">
-				<div class="col-2">
-					<div id="dpProcessType"></div>
-				</div>
-			</div>
-			<div class="tabs-container"></div>
-				<div id="dvUpdateProcess">
-					<div id="initial" style="display:none">
-						<div class="row mt-5">
-							<div class="col-2">
-								<div id="targetKPI"></div>
-							</div>
-							<div class="col-2">
-								<div id="uploadFile"></div>
-							</div>
-						</div>
-					</div>
-					<div class="row mt-3" id="h1" style="display:none">
-						<div class="col">
-							<div id="uploadFileH1"></div>
-							<div id="uploadFileH2"></div>
-							<div id="gridBulkUploadActual"></div>
-						</div>
-					</div>
-				</div>
-				<div id="dvUploadHistory">
-					<div class="row mt-5">
-						<div id="gridUploadHistory"></div>
-					</div>
-				</div>`;
+							int start = Convert.ToInt16(itemUserKPI["Start"]);
+							int end = Convert.ToInt16(itemUserKPI["End"]);
+							int performanceCapping = 100; // Convert.ToInt16(itemKPIType["PerformanceCapping"]); <!-- Done Cause of Capping Change -->
 
-	$("#content").empty();
-	$("#content").html(html);
+							lowestStart = start < lowestStart ? start : lowestStart; // done for new joiner
 
-	const tabContainer = $(".tabs-container").dxTabs({
-		dataSource: lblTabs,
-		selectedIndex: 0,
-		width: 500,
-		onItemClick(e) {
-			if (e.itemData.text === "Upload Process") {
-				$("#dvUpdateProcess").show();
-				$("#dvUploadHistory").hide();
-			} else if (e.itemData.text === "My Upload History") {
-				$("#dvUpdateProcess").hide();
-				$("#dvUploadHistory").show();
-			}
-			const _currentValue = processType.option("selectedItem");
-			if (_currentValue) {
-				processTypeValueChanged(_currentValue.value);
-			}
-		},
-	}).dxTabs("instance");
-
-	const processType = $("#dpProcessType").dxSelectBox({
-		dataSource: [{ text: "Upload Initial KPIs", value: "initial" }, { text: "Update H1", value: "h1" }, { text: "Update H2", value: "h2" }],
-		valueExpr: "value",
-		displayExpr: "text",
-		onValueChanged: async (e) => {
-			const currentValue = e.value;
-
-			processTypeValueChanged(currentValue);
-		},
-	}).dxSelectBox("instance");
-
-	$("#uploadFileH1").dxFileUploader({
-		elementAttr: {
-			class: "fileUpload"
-		},
-		selectButtonText: "Upload actual KPI H1",
-		labelText: "",
-		accept: ".xls, .xlsx",
-		uploadMode: "instantly",
-		hoverStateEnabled: false,
-		focusStateEnabled: false,
-		activeStateEnabled: false,
-		multiple: false,
-		onValueChanged: async (e) => {
-			const values = e.value;
-			let fileInfos;
-			if (values.length) {
-				fileInfos = await blob(values); // , "BulkUpload"
-				if (typeof (fileInfos) === "string") {
-					DevExpress.ui.dialog.alert(fileInfos, "EPMS");
-					return;
-				}
-			}
-			const recTitle = `${context.pageContext.legacyPageContext.userLoginName.split("\\")[1]}_${(new Date()).toISOString()}`;
-			const insertedData = await sp.web.lists.getByTitle("BulkUpload").items.add({
-				Title: recTitle,
-				YearId: selectedContractYear,
-				Status: "Submitted",
-				UploadType: "H1"
-			});
-			if (insertedData && insertedData.data && values.length) {
-				await fileUploadToItem("BulkUpload", insertedData.data.Id, fileInfos);
-				DevExpress.ui.dialog.alert("We are working on the Uploaded file. You will receive email for the uploading status.", "EPMS");
-			}
-		},
-	});
-
-	$("#uploadFileH2").dxFileUploader({
-		elementAttr: {
-			class: "fileUpload"
-		},
-		selectButtonText: "Upload actual KPI H2",
-		labelText: "",
-		accept: ".xls, .xlsx",
-		uploadMode: "instantly",
-		hoverStateEnabled: false,
-		focusStateEnabled: false,
-		activeStateEnabled: false,
-		multiple: false,
-		onValueChanged: async (e) => {
-			const values = e.value;
-			let fileInfos;
-			if (values.length) {
-				fileInfos = await blob(values); // , "BulkUpload"
-				if (typeof (fileInfos) === "string") {
-					DevExpress.ui.dialog.alert(fileInfos, "EPMS");
-					return;
-				}
-			}
-			const recTitle = `${context.pageContext.legacyPageContext.userLoginName.split("\\")[1]}_${(new Date()).toISOString()}`;
-			const insertedData = await sp.web.lists.getByTitle("BulkUpload").items.add({
-				Title: recTitle,
-				YearId: selectedContractYear,
-				Status: "Submitted",
-				UploadType: "H2"
-			});
-			if (insertedData && insertedData.data && values.length) {
-				await fileUploadToItem("BulkUpload", insertedData.data.Id, fileInfos);
-				DevExpress.ui.dialog.alert("We are working on the Uploaded file. You will receive email for the uploading status.", "EPMS");
-			}
-		},
-	});
-
-	const processTypeValueChanged = async (currentValue: string) => {
-		if (tabContainer.option("selectedItem").text === "Upload Process") {
-			if (currentValue === "initial") {
-				$(`#initial`).show();
-				$(`#h1`).hide();
-			} else if (currentValue === "h1" || currentValue === "h2") {
-				$(`#initial`).hide();
-				$(`#h1`).show();
-				if (currentValue === "h1") {
-					$("#uploadFileH1").show();
-					$("#uploadFileH2").hide();
-				} else if (currentValue === "h2") {
-					$("#uploadFileH2").show();
-					$("#uploadFileH1").hide();
-				}
-			}
-
-			if (currentValue === "initial") {
-				$("#targetKPI").dxButton({
-					text: "Download Initial KPI template",
-					type: "default",
-					hoverStateEnabled: false,
-					focusStateEnabled: false,
-					activeStateEnabled: false,
-					onClick: async (el) => {
-						const dataKPI = await createKPISheet(selectedContractYear);
-						const dataCategories = await getSelectedYearCategories(selectedContractYear);
-
-						try {
-							const workbook = new ExcelJS.Workbook();
-							const worksheetKPI = workbook.addWorksheet("KPI");
-							const worksheetCategories = workbook.addWorksheet("Categories");
-
-							worksheetKPI.columns = [
-								{ letter: "A", header: "Year", key: "Year" },
-								{ letter: "B", header: "EmployeeID", key: "EmployeeID" },
-								{ letter: "C", header: "KPIDescription", key: "KPIDescription" },
-								{ letter: "D", header: "Category", key: "Category" },
-								{ letter: "E", header: "SubCategory", key: "SubCategory" },
-								{ letter: "F", header: "KPIType", key: "KPIType" },
-								{ letter: "G", header: "Weight", key: "Weight" },
-								{ letter: "H", header: "Baseline", key: "Baseline" },
-								{ letter: "I", header: "EndTarget", key: "EndTarget" },
-								{ letter: "J", header: "TargetType", key: "TargetType" },
-								{ letter: "K", header: "DesiredTo", key: "DesireTo" },
-								{ letter: "L", header: "Start", key: "Start" },
-								{ letter: "M", header: "End", key: "End" },
-								{ letter: "N", header: "WorkStep Objective", key: "WorkStep Objective" },
-								{ letter: "O", header: "WorkStep Percentage", key: "WorkStep Percentage" },
-								{ letter: "P", header: "WorkStep Start", key: "WorkStep Start" },
-								{ letter: "Q", header: "WorkStep End", key: "WorkStep End" },
-							];
-							worksheetKPI.addRows(dataKPI);
-
-							worksheetCategories.columns = [
-								{ letter: "A", header: "Category", key: "Category" },
-								{ letter: "B", header: "SubCategory", key: "SubCategory" },
-								{ letter: "C", header: "KPIType", key: "KPIType" },
-								{ letter: "D", header: "Year", key: "Year" }
-							];
-							worksheetCategories.addRows(dataCategories);
-
-							workbook.xlsx.writeBuffer().then((buffer) => {
-								saveAs(new Blob([buffer], { type: "application/octet-stream" }), "UplaodIntialKPI_Template.xlsx");
-							});
-						} catch (err) {
-							console.error("export error", err);
-						}
-					},
-				});
-
-				$("#uploadFile").dxFileUploader({
-					elementAttr: {
-						class: "fileUpload"
-					},
-					selectButtonText: "Upload Initial KPI",
-					labelText: "",
-					accept: ".xls, .xlsx",
-					uploadMode: "instantly",
-					hoverStateEnabled: false,
-					focusStateEnabled: false,
-					activeStateEnabled: false,
-					multiple: false,
-					onValueChanged: async (el) => {
-						const values = el.value;
-						let fileInfos;
-						if (values.length) {
-							fileInfos = await blob(values); // , "BulkUpload"
-							if (typeof (fileInfos) === "string") {
-								DevExpress.ui.dialog.alert(fileInfos, "EPMS");
-								return;
+							bool endResultOverwrite = false;
+							if (itemsCategory.Count > 0)
+							{
+								endResultOverwrite = Convert.ToBoolean(itemsCategory[0]["EndResultOverwrite"]);
 							}
-						}
-						const recTitle = `${context.pageContext.legacyPageContext.userLoginName.split("\\")[1]}_${(new Date()).toISOString()}`;
-						const insertedData = await sp.web.lists.getByTitle("BulkUpload").items.add({
-							Title: recTitle,
-							YearId: selectedContractYear,
-							Status: "Submitted",
-							UploadType: "Initial"
-						});
-						if (insertedData && insertedData.data && values.length) {
-							await fileUploadToItem("BulkUpload", insertedData.data.Id, fileInfos);
-							DevExpress.ui.dialog.alert("We are working on the Uploaded file. You will receive email for the uploading status.", "EPMS");
-						}
-					},
-				});
-			} else if (currentValue === "h1" || currentValue === "h2") {
-				loadPanel.option("message", "Loading Contracts ....");
-				loadPanel.show();
 
-				const currentEmployee = await getCurrentContractEmployee(selectedContractYear, context);
-				let contracts = [];
+							if (endResultOverwrite == false)
+							{
+								if (start == 1 && (itemUserKPI["PerformanceQ1"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ1"]) != 0) && (itemUserKPI["ActualQ1"] != null || Convert.ToDecimal(itemUserKPI["ActualQ1"]) != 0)) // Q1
+								{
+									kpiPerformanceQ1 += (Convert.ToDecimal(itemUserKPI["PerformanceQ1"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ1 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
 
-				const assignRoles = await sp.web.lists
-					.getByTitle("AssignRoles")
-					.items
-					.select("Id")
-					.filter(`EmployeeId eq '${currentEmployee[0].EmployeeId}' and YearId eq ${selectedContractYear} and isDeleted eq false`)
-					.getAll();
+								if ((start >= 1 && end >= 2) && (itemUserKPI["PerformanceQ2"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ2"]) != 0) && (itemUserKPI["ActualQ2"] != null || Convert.ToDecimal(itemUserKPI["ActualQ2"]) != 0)) // Q2
+								{
+									kpiPerformanceQ2 += (Convert.ToDecimal(itemUserKPI["PerformanceQ2"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ2 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
 
-				if (assignRoles.length > 0) {
-					const assignRoleChild = await sp.web.lists
-						.getByTitle("AssignRoleGroupDivision")
-						.items
-						.select("Id", "Title")
-						.filter(`YearId eq ${selectedContractYear} and AssignRoleId eq ${assignRoles[0].Id}`)
-						.getAll();
+								if ((start >= 1 && end >= 3) && (itemUserKPI["PerformanceQ3"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ3"]) != 0) && (itemUserKPI["ActualQ3"] != null || Convert.ToDecimal(itemUserKPI["ActualQ3"]) != 0)) // Q3
+								{
+									kpiPerformanceQ3 += (Convert.ToDecimal(itemUserKPI["PerformanceQ3"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ3 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
 
-					for (let i = 0; i < assignRoleChild.length; i++) {
-						const PMOEmployee = await sp.web.lists
-							.getByTitle("Contract")
-							.items
-							.select("Id", "EmployeeId")
-							.filter(`(Employee/Title eq '${assignRoleChild[i].Title}' or Employee/Group eq '${assignRoleChild[i].Title}' or Employee/Division eq '${assignRoleChild[i].Title}' or Employee/Department eq '${assignRoleChild[i].Title}') and YearId eq ${selectedContractYear} and isDeleted eq false`)
-							.get();
-
-						contracts = contracts.concat(PMOEmployee);
-					}
-				}
-
-				contracts = uniqBy(contracts, "EmployeeId");
-				const UserKPI = [];
-
-				(async () => {
-					loadPanel.show();
-
-					// const b: SPBatch = sp.web.createBatch();
-					const res: IResults = {};
-					const filterH1H2 = currentValue === "h1" ? `Start le 2` : `End ge 3`;
-
-					if (contracts.length > 0) {
-						let batch: SPBatch;
-						for (let i = 0; i < contracts.length; i++) {
-							if (i === 0 || i % 98 === 0) {
-								batch = sp.web.createBatch();
-							}
-							wrapBatchPromise(sp.web.lists
-								.getByTitle("UserKPI")
-								.items
-								.inBatch(batch)
-								.select("Id", "CategoryId", "SubCategoryId", "ContractId", "KPITypeId", "KPIID", "KPIDescription", "Weight", "Baseline", "EndTarget", "TargetType", "DesiredTo", "Start", "End",
-									"TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4", "Category/Title", "SubCategory/SubCategory", "KPIType/Title", "Contract/Period",
-									"Employee/EmployeeId", "Employee/Title", "Employee/Grade", "Employee/Group", "Employee/Division", "Employee/Department", "Year", "KPIType/IsWorkStepString")
-								.expand("Category", "SubCategory", "KPIType", "Contract", "Employee")
-								.filter(`isDeleted eq false and ContractId eq ${contracts[i].Id} and Year eq '${selectedYearValue}' and IsCorporate eq false and ${filterH1H2}`)
-								.get(), res, `UserKPI${i}`);
-
-							if (i !== 0 && i % 97 === 0 && i !== contracts.length - 1) {
-								await batch.execute().catch(_ => {/**/ });
-							} else if (i === contracts.length - 1) {
-								await batch.execute().catch(_ => {/**/ });
-							}
-						}
-					} else {
-						const batch: SPBatch = sp.web.createBatch();
-
-						wrapBatchPromise(sp.web.lists
-							.getByTitle("UserKPI")
-							.items
-							.inBatch(batch)
-							.select("Id", "CategoryId", "SubCategoryId", "ContractId", "KPITypeId", "KPIID", "KPIDescription", "Weight", "Baseline", "EndTarget", "TargetType", "DesiredTo", "Start", "End",
-								"TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4", "Category/Title", "SubCategory/SubCategory", "KPIType/Title", "Contract/Period",
-								"Employee/EmployeeId", "Employee/Title", "Employee/Grade", "Employee/Group", "Employee/Division", "Employee/Department", "Year", "KPIType/IsWorkStepString")
-							.expand("Category", "SubCategory", "KPIType", "Contract", "Employee")
-							.filter(`isDeleted eq false and Year eq '${selectedYearValue}' and ${filterH1H2}`)
-							.top(5000)
-							.get(), res, `UserKPI0`);
-
-						await batch.execute().catch(_ => {/**/ });
-					}
-
-					// await b.execute().catch(_ => {/**/ });
-
-					const b: SPBatch = sp.web.createBatch();
-					for (let i = 0; i < Object.keys(res).length; i++) {
-						if (res[`UserKPI${i}`] && res[`UserKPI${i}`].data && res[`UserKPI${i}`].data.length > 0) {
-							for (let j = 0; j < res[`UserKPI${i}`].data.length; j++) {
-								if (res[`UserKPI${i}`].data[j].KPIType.IsWorkStepString === "true") {
-									wrapBatchPromise(sp.web.lists
-										.getByTitle("WorkStep")
-										.items
-										.inBatch(b)
-										.select("UserKPIId", "Title", "Percentage", "Start", "End", "TargetQ1", "TargetQ2", "TargetQ3", "TargetQ4", "ActualQ1", "ActualQ2", "ActualQ3", "ActualQ4")
-										.filter(`UserKPIId eq ${res[`UserKPI${i}`].data[j].Id}`)
-										.get(), res, `WorkStep${i}-${j}`);
+								if ((start >= 1 && end == 4) && (itemUserKPI["PerformanceQ4"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) != 0) && (itemUserKPI["ActualQ4"] != null || Convert.ToDecimal(itemUserKPI["ActualQ4"]) != 0)) // Q4
+								{
+									kpiPerformanceQ4 += (Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ4 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
 								}
 							}
+							else
+							{
+								if (Convert.ToBoolean(itemContract["EndNegativeFlag"]) == true)
+								{
+									endNegativeResult += Convert.ToDecimal(itemUserKPI["EndNegativeResult"]);
+								}
+								else
+								{
+									endNegativeResult += (itemUserKPI["PerformanceQ4"] == null || Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) != 0) ? 0 : Convert.ToDecimal(itemUserKPI["Weight"]);
+								}
+							}
+						}
+
+						decimal performanceQ1 = Math.Round(((kpiPerformanceQ1 / kpiCappingQ1) * 100), 2);
+						decimal performanceQ2 = Math.Round(((kpiPerformanceQ2 / kpiCappingQ2) * 100), 2);
+						decimal performanceQ3 = Math.Round(((kpiPerformanceQ3 / kpiCappingQ3) * 100), 2);
+						decimal performanceQ4 = Math.Round(((kpiPerformanceQ4 / kpiCappingQ4) * 100), 2);
+
+						itemContract["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContract["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContract["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContract["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+
+						itemContract["EndNegativeResult"] = endNegativeResult;
+
+						int periodQuater = (4 - lowestStart) + 1; // done for new joiner
+
+						//itemContract["EndYearResult"] = Math.Round(((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) / 4) - (endNegativeResult * -1), 2);
+						itemContract["EndYearResult"] = Math.Round(((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) / periodQuater) - (endNegativeResult * -1), 2); // done for new joiner
+
+						using (EventReceiverManager eventReceiverManager = new EventReceiverManager(true))
+						{
+							itemContract.Update();
+						}
+
+						SPList listContractHistory = properties.Web.Lists.TryGetList("ContractHistory");
+
+						SPListItem itemContractHistoryToAdd = listContractHistory.AddItem();
+
+						itemContractHistoryToAdd["Contract"] = lookupContract;
+						itemContractHistoryToAdd["Employee"] = lookupEmployee.LookupValue;
+						itemContractHistoryToAdd["Year"] = itemContract["Year"];
+						itemContractHistoryToAdd["Status"] = itemContract["Status"];
+						itemContractHistoryToAdd["Stage"] = itemContract["Stage"];
+						itemContractHistoryToAdd["Action"] = Convert.ToBoolean(currentItem["IsCorporate"]) ? "Corporate KPI - Added" : "User KPI - Added";
+						itemContractHistoryToAdd["ActionBy"] = properties.Web.CurrentUser.Name;
+						itemContractHistoryToAdd["KPIDescription"] = currentItem["KPIDescription"];
+						itemContractHistoryToAdd["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContractHistoryToAdd["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContractHistoryToAdd["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContractHistoryToAdd["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+						itemContractHistoryToAdd["EndNegativeResult"] = endNegativeResult;
+						itemContractHistoryToAdd["EndYearResult"] = Math.Round((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) - (endNegativeResult * -1), 2);
+
+						itemContractHistoryToAdd.Update();
+
+						if (Convert.ToBoolean(currentItem["isDeleted"]) == true)
+						{
+							currentItem.Delete();
 						}
 					}
-
-					await b.execute().catch(_ => {/**/ });
-
-					return res;
-				})()
-					.then((data) => {
-						const userKPIs = Object.fromEntries(Object.entries(data).filter(([key]) => key.includes("UserKPI")));
-						const workSteps = Object.fromEntries(Object.entries(data).filter(([key]) => key.includes("WorkStep")));
-
-						const userKPI = getData(userKPIs);
-						const workStep = getData(workSteps);
-
-						for (let i = 0; i < userKPI.length; i++) {
-							const WorkStep = workStep.filter((x) => x.UserKPIId === userKPI[i].Id);
-							if (WorkStep.length > 0) {
-								for (let j = 0; j < WorkStep.length; j++) {
-									renameObjectKey("ActualQ1", "WorkStepActualQ1", WorkStep[j]);
-									renameObjectKey("ActualQ2", "WorkStepActualQ2", WorkStep[j]);
-									renameObjectKey("ActualQ3", "WorkStepActualQ3", WorkStep[j]);
-									renameObjectKey("ActualQ4", "WorkStepActualQ4", WorkStep[j]);
-									renameObjectKey("TargetQ1", "WorkStepTargetQ1", WorkStep[j]);
-									renameObjectKey("TargetQ2", "WorkStepTargetQ2", WorkStep[j]);
-									renameObjectKey("TargetQ3", "WorkStepTargetQ3", WorkStep[j]);
-									renameObjectKey("TargetQ4", "WorkStepTargetQ4", WorkStep[j]);
-									renameObjectKey("Start", "WorkStepStart", WorkStep[j]);
-									renameObjectKey("End", "WorkStepEnd", WorkStep[j]);
-
-									const temp = { ...userKPI[i], ...WorkStep[j] };
-									UserKPI.push(temp);
-								}
-							} else {
-								const tempWorkStep = {
-									Title: "",
-									Percentage: "",
-									WorkStepStart: "",
-									WorkStepEnd: "",
-									WorkStepActualQ1: "",
-									WorkStepActualQ2: "",
-									WorkStepActualQ3: "",
-									WorkStepActualQ4: "",
-									WorkStepTargetQ1: "",
-									WorkStepTargetQ2: "",
-									WorkStepTargetQ3: "",
-									WorkStepTargetQ4: ""
-								};
-								const temp = { ...userKPI[i], ...tempWorkStep };
-								UserKPI.push(temp);
-							}
-						}
-
-						grid.option("dataSource", UserKPI);
-						grid.refresh();
-
-						loadPanel.hide();
-					})
-					.catch(console.warn);
-
-				const grid = $("#gridBulkUploadActual").dxDataGrid({
-					columnAutoWidth: true,
-					showBorders: true,
-					showRowLines: true,
-					rowAlternationEnabled: true,
-					paging: {
-						enabled: true,
-						pageSize: 15
-					},
-					sorting: {
-						mode: "multiple"
-					},
-					filterRow: {
-						visible: true,
-						applyFilter: "auto"
-					},
-					dataSource: UserKPI,
-					toolbar: {
-						items: [{
-							location: "after",
-							widget: "dxButton",
-							options: {
-								type: "default",
-								text: "Export to Excel",
-								elementAttr: {
-									id: "btnExportExcel"
-								},
-								onClick: (el) => {
-									const workbook = new ExcelJS.Workbook();
-									const period = currentValue === "h1" ? "H1" : "H2";
-									const worksheet = workbook.addWorksheet(period);
-
-									DevExpress.excelExporter.exportDataGrid({
-										worksheet: worksheet,
-										component: grid,
-										customizeCell(options) {
-											options.excelCell.font = { name: "Arial", size: 12 };
-											options.excelCell.alignment = { horizontal: "left" };
-										},
-									}).then(() => {
-										workbook.xlsx.writeBuffer().then((buffer) => {
-											saveAs(new Blob([buffer], { type: "application/octet-stream" }), `Update${period}_Template.xlsx`);
-										});
-									});
-								}
-							}
-						}]
-					},
-					columns: [{
-						dataField: "Year",
-						fixed: true,
-					}, {
-						dataField: "Employee.EmployeeId",
-						caption: "EmployeeId",
-						fixed: true,
-					}, {
-						dataField: "Employee.Title",
-						caption: "Employee Name",
-						width: 120,
-						fixed: true,
-					}, {
-						dataField: "KPIID",
-						caption: "KPIID",
-						fixed: true,
-					}, {
-						dataField: "KPIDescription",
-						caption: "KPIDescription",
-						fixed: true,
-						width: 400,
-						allowResizing: true
-					}, {
-						dataField: "Employee.Grade",
-						caption: "Grade",
-					}, {
-						dataField: "Employee.Group",
-						caption: "Group",
-					}, {
-						dataField: "Employee.Division",
-						caption: "Division",
-					}, {
-						dataField: "Employee.Department",
-						caption: "Department",
-					}, {
-						dataField: "CategoryId",
-						caption: "Category",
-						calculateDisplayValue: "Category.Title",
-					}, {
-						dataField: "SubCategoryId",
-						caption: "SubCategory",
-						calculateDisplayValue: "SubCategory.SubCategory",
-					}, {
-						dataField: "KPITypeId",
-						caption: "KPIType",
-						calculateDisplayValue: "KPIType.Title",
-					}, "Weight", "Baseline", {
-						dataField: "EndTarget",
-						caption: "EndTarget"
-					}, {
-						dataField: "TargetType",
-						caption: "TargetType"
-					}, {
-						dataField: "DesiredTo",
-						caption: "DesiredTo"
-					}, "Start", "End", {
-						dataField: "TargetQ1",
-						caption: "TargetQ1",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "ActualQ1",
-						caption: "ActualQ1",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "TargetQ2",
-						caption: "TargetQ2",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "ActualQ2",
-						caption: "ActualQ2",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "TargetQ3",
-						caption: "TargetQ3",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "ActualQ3",
-						caption: "ActualQ3",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "TargetQ4",
-						caption: "TargetQ4",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "ActualQ4",
-						caption: "ActualQ4",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "Title",
-						caption: "WorkStep Objective",
-						width: 510,
-						allowResizing: true
-					}, {
-						dataField: "Percentage",
-						caption: "WorkStep Percentage"
-					}, {
-						dataField: "WorkStepStart",
-						caption: "WorkStep Start"
-					}, {
-						dataField: "WorkStepEnd",
-						caption: "WorkStep End"
-					}, {
-						dataField: "WorkStepTargetQ1",
-						caption: "WorkStep TargetQ1",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "WorkStepActualQ1",
-						caption: "WorkStep ActualQ1",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "WorkStepTargetQ2",
-						caption: "WorkStep TargetQ2",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "WorkStepActualQ2",
-						caption: "WorkStep ActualQ2",
-						visible: currentValue === "h1"
-					}, {
-						dataField: "WorkStepTargetQ3",
-						caption: "WorkStep TargetQ3",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "WorkStepActualQ3",
-						caption: "WorkStep ActualQ3",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "WorkStepTargetQ4",
-						caption: "WorkStep TargetQ4",
-						visible: currentValue === "h2"
-					}, {
-						dataField: "WorkStepActualQ4",
-						caption: "WorkStep ActualQ4",
-						visible: currentValue === "h2"
-					}],
-				}).dxDataGrid("instance");
-				// loadPanel.hide();
-			}
-		} else {
-			let dataUploadHistory = [];
-			const userId = context.pageContext.legacyPageContext.userId;
-			const filterCreatedBy = isMember ? "" : `Author/Id eq ${userId} and `;
-			if (currentValue === "initial") {
-				dataUploadHistory = await sp.web.lists
-					.getByTitle("BulkUpload")
-					.items
-					.select("Id", "YearId", "Status", "Created", "Author/Title", "TotalRecords", "RowInserted", "RowFailed")
-					.expand("Author")
-					.filter(`${filterCreatedBy}YearId eq ${selectedContractYear} and UploadType eq 'Initial'`)
-					.get();
-			} else if (currentValue === "h1") {
-				dataUploadHistory = await sp.web.lists
-					.getByTitle("BulkUpload")
-					.items
-					.select("Id", "YearId", "Status", "Created", "Author/Title", "TotalRecords", "RowInserted", "RowFailed")
-					.expand("Author")
-					.filter(`${filterCreatedBy}YearId eq ${selectedContractYear} and UploadType eq 'H1'`)
-					.get();
-			} else if (currentValue === "h2") {
-				dataUploadHistory = await sp.web.lists
-					.getByTitle("BulkUpload")
-					.items
-					.select("Id", "YearId", "Status", "Created", "Author/Title", "TotalRecords", "RowInserted", "RowFailed")
-					.expand("Author")
-					.filter(`${filterCreatedBy}YearId eq ${selectedContractYear} and UploadType eq 'H2'`)
-					.get();
-			}
-
-			$("#gridUploadHistory").dxDataGrid({
-				columnAutoWidth: true,
-				showBorders: true,
-				showRowLines: true,
-				rowAlternationEnabled: true,
-				keyExpr: "Id",
-				paging: {
-					enabled: true,
-					pageSize: 15
-				},
-				sorting: {
-					mode: "multiple"
-				},
-				filterRow: {
-					visible: true,
-					applyFilter: "auto"
-				},
-				dataSource: dataUploadHistory,
-				columns: ["Status", {
-					dataField: "Created",
-					caption: "Created Date",
-					dataType: "datetime",
-					customizeText(cellInfo) {
-						return DevExpress.localization.formatDate(new Date(cellInfo.value), "MM/dd/yyyy HH:mm a");
-					},
-				}, {
-						dataField: "Author.Title",
-						caption: "Created By",
-					}, {
-						dataField: "TotalRecords",
-					}, {
-						dataField: "RowInserted",
-						caption: "Inserted",
-					}, {
-						dataField: "RowFailed",
-						caption: "Failed",
-					}, {
-						type: "buttons",
-						name: "logs",
-						caption: "Download Logs",
-						width: 150,
-						buttons: [{
-							text: "Logs",
-							visible(options) {
-								return options.row.data.Status === "Failed";
-							},
-							onClick: async (el) => {
-								// const _currentValue = processType.option("selectedItem");
-								const dataCategories = await getSelectedYearCategories(selectedContractYear);
-								const workbook = new ExcelJS.Workbook();
-								const period = currentValue === "h1" ? "H1" : currentValue === "h2" ? "H2" : "Initial";
-								let dataKPI;
-
-								if (currentValue === "initial") {
-									dataKPI = await getBulkLogData("BulkUploadLog", el.row.key);
-
-									const worksheetKPI = workbook.addWorksheet("Initial Fialed Logs");
-									const worksheetCategories = workbook.addWorksheet("Categories");
-
-									worksheetKPI.columns = [
-										{ letter: "A", header: "Year", key: "Title" },
-										{ letter: "B", header: "EmployeeID", key: "EmployeeID" },
-										{ letter: "C", header: "KPIDescription", key: "KPIDescription" },
-										{ letter: "D", header: "Category", key: "Category" },
-										{ letter: "E", header: "SubCategory", key: "SubCategory" },
-										{ letter: "F", header: "KPIType", key: "KPIType" },
-										{ letter: "G", header: "Weight", key: "Weight" },
-										{ letter: "H", header: "Baseline", key: "Baseline" },
-										{ letter: "I", header: "EndTarget", key: "EndTarget" },
-										{ letter: "J", header: "TargetType", key: "TargetType" },
-										{ letter: "K", header: "DesiredTo", key: "DesiredTo" },
-										{ letter: "L", header: "Start", key: "Start" },
-										{ letter: "M", header: "End", key: "End" },
-										{ letter: "N", header: "WorkStep Objective", key: "WorkStepObjective" },
-										{ letter: "O", header: "WorkStep Percentage", key: "WorkStepPercentage" },
-										{ letter: "P", header: "WorkStep Start", key: "WorkStepStart" },
-										{ letter: "Q", header: "WorkStep End", key: "WorkStepEnd" },
-										{ letter: "R", header: "ErrMessage", key: "ErrMessage" },
-									];
-									worksheetKPI.addRows(dataKPI);
-
-									worksheetCategories.columns = [
-										{ letter: "A", header: "Category", key: "Category" },
-										{ letter: "B", header: "SubCategory", key: "SubCategory" },
-										{ letter: "C", header: "KPIType", key: "KPIType" },
-										{ letter: "D", header: "Year", key: "Year" }
-									];
-									worksheetCategories.addRows(dataCategories);
-								} else if (currentValue === "h1" || currentValue === "h2") {
-									if (currentValue === "h1") {
-										dataKPI = await getBulkLogData("BulkUploadH1Log", el.row.key);
-									} else {
-										dataKPI = await getBulkLogData("BulkUploadH2Log", el.row.key);
-									}
-									const worksheetKPI = workbook.addWorksheet(`${period} Fialed Logs`);
-									const worksheetCategories = workbook.addWorksheet("Categories");
-
-									worksheetKPI.columns = [
-										{ letter: "A", header: "Year", key: "Title" },
-										{ letter: "B", header: "EmployeeID", key: "EmployeeID" },
-										{ letter: "C", header: "KPIID", key: "KPIID" },
-										{ letter: "D", header: "KPIDescription", key: "KPIDescription" },
-										{ letter: "E", header: "Category", key: "Category" },
-										{ letter: "F", header: "SubCategory", key: "SubCategory" },
-										{ letter: "G", header: "KPIType", key: "KPIType" },
-										{ letter: "H", header: "Weight", key: "Weight" },
-										{ letter: "I", header: "Baseline", key: "Baseline" },
-										{ letter: "J", header: "EndTarget", key: "EndTarget" },
-										{ letter: "K", header: "TargetType", key: "TargetType" },
-										{ letter: "L", header: "DesiredTo", key: "DesiredTo" },
-										{ letter: "M", header: "Start", key: "Start" },
-										{ letter: "N", header: "End", key: "End" },
-										...(currentValue === "h1" ? [{ letter: "O", header: "TargetQ1", key: "TargetQ1" }] : []),
-										...(currentValue === "h1" ? [{ letter: "P", header: "ActualQ1", key: "ActualQ1" }] : []),
-										...(currentValue === "h1" ? [{ letter: "Q", header: "TargetQ2", key: "TargetQ2" }] : []),
-										...(currentValue === "h1" ? [{ letter: "R", header: "ActualQ2", key: "ActualQ2" }] : []),
-										...(currentValue === "h2" ? [{ letter: "O", header: "TargetQ3", key: "TargetQ3" }] : []),
-										...(currentValue === "h2" ? [{ letter: "P", header: "ActualQ3", key: "ActualQ3" }] : []),
-										...(currentValue === "h2" ? [{ letter: "Q", header: "TargetQ4", key: "TargetQ4" }] : []),
-										...(currentValue === "h2" ? [{ letter: "R", header: "ActualQ4", key: "ActualQ4" }] : []),
-										{ letter: "S", header: "WorkStep Objective", key: "WorkStepObjective" },
-										{ letter: "T", header: "WorkStep Percentage", key: "WorkStepPercentage" },
-										{ letter: "U", header: "WorkStep Start", key: "WorkStepStart" },
-										{ letter: "V", header: "WorkStep End", key: "WorkStepEnd" },
-										...(currentValue === "h1" ? [{ letter: "X", header: "WorkStep TargetQ1", key: "WorkStepTargetQ1" }] : []),
-										...(currentValue === "h1" ? [{ letter: "Y", header: "WorkStep ActualQ1", key: "WorkStepActualQ1" }] : []),
-										...(currentValue === "h1" ? [{ letter: "Z", header: "WorkStep TargetQ2", key: "WorkStepTargetQ2" }] : []),
-										...(currentValue === "h1" ? [{ letter: "AA", header: "WorkStep ActualQ2", key: "WorkStepActualQ2" }] : []),
-										...(currentValue === "h2" ? [{ letter: "X", header: "WorkStep TargetQ3", key: "WorkStepTargetQ3" }] : []),
-										...(currentValue === "h2" ? [{ letter: "Y", header: "WorkStep ActualQ3", key: "WorkStepActualQ3" }] : []),
-										...(currentValue === "h2" ? [{ letter: "Z", header: "WorkStep TargetQ4", key: "WorkStepTargetQ4" }] : []),
-										...(currentValue === "h2" ? [{ letter: "AA", header: "WorkStep ActualQ4", key: "WorkStepActualQ4" }] : []),
-										{ letter: "W", header: "ErrMessage", key: "ErrMessage" },
-									];
-									worksheetKPI.addRows(dataKPI);
-
-									worksheetCategories.columns = [
-										{ letter: "A", header: "Category", key: "Category" },
-										{ letter: "B", header: "SubCategory", key: "SubCategory" },
-										{ letter: "C", header: "KPIType", key: "KPIType" },
-										{ letter: "D", header: "Year", key: "Year" }
-									];
-									worksheetCategories.addRows(dataCategories);
-								}
-								const fileName = `BulkuploadLogs_${el.row.key}_${period}_${new Date().getTime()}`;
-
-								workbook.xlsx.writeBuffer().then((buffer) => {
-									saveAs(new Blob([buffer], { type: "application/octet-stream" }), `${fileName}.xlsx`);
-								});
-							},
-						}]
-					}, {
-						type: "buttons",
-						name: "attachments",
-						caption: "Download Attachment",
-						width: 150,
-						buttons: [{
-							text: "Attachment",
-							onClick: async (el) => {
-								const item: IItem = sp.web.lists.getByTitle("BulkUpload").items.getById(el.row.key);
-								const attachments: IAttachmentInfo[] = await item.attachmentFiles();
-
-								window.open(`${attachments[0].ServerRelativeUrl}`, "_blank");
-							},
-						}]
-					}],
+					catch (Exception ex)
+					{
+						LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI Item Added Event Receiver\n" + ex.Message);
+					}
+				}
+				properties.Web.AllowUnsafeUpdates = false;
 			});
 		}
 
-		$(".fileUpload .dx-button-mode-contained").addClass("dx-button-default");
-	};
-};
+		/// <summary>
+		/// An item was updated.
+		/// </summary>
+		public override void ItemUpdated(SPItemEventProperties properties)
+		{
+			base.ItemUpdated(properties);
+
+			SPSecurity.RunWithElevatedPrivileges(delegate ()
+			{
+				properties.Web.AllowUnsafeUpdates = true;
+
+				using (SPWeb web = properties.OpenWeb())
+				{
+					try
+					{
+						SPListItem currentItem = properties.ListItem;
+
+						SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+						SPFieldLookupValue lookupContract = new SPFieldLookupValue(Convert.ToString(currentItem["Contract"]));
+						SPListItemCollection itemsUserKPI = getUserKPI(listUserKPI, lookupContract.LookupId);
+
+						SPList listContract = properties.Web.Lists.TryGetList("Contract");
+						SPListItem itemContract = listContract.GetItemById(lookupContract.LookupId);
+						SPFieldLookupValue lookupEmployee = new SPFieldLookupValue(Convert.ToString(itemContract["Employee"]));
+
+						SPFieldLookupValue year = new SPFieldLookupValue(Convert.ToString(itemContract["Year"]));
+
+						SPList listPerformanceBracket = properties.Web.Lists.TryGetList("PerformanceBracket");
+						SPFieldLookupValue lookupEmployeeLeveling = new SPFieldLookupValue(Convert.ToString(itemContract["Employee_x003a_Leveling"]));
+
+						SPFieldLookupValue lookupEmployeeDirectManager = new SPFieldLookupValue(Convert.ToString(itemContract["Employee_x003a_DirectManagerId"]));
+						SPListItemCollection itemContractDirectManager = getContractByEmployeeId(listContract, lookupEmployeeDirectManager.LookupValue, Convert.ToString(year.LookupValue));
+
+						SPListItemCollection itemCollectionEnterPrise = getContractByEmployeeId(listContract, "800", Convert.ToString(year.LookupValue));
+
+						decimal kpiPerformanceQ1 = 0, kpiPerformanceQ2 = 0, kpiPerformanceQ3 = 0, kpiPerformanceQ4 = 0;
+						decimal kpiCappingQ1 = 0, kpiCappingQ2 = 0, kpiCappingQ3 = 0, kpiCappingQ4 = 0;
+						decimal endNegativeResult = 0;
+
+						//decimal flagThreshold = 0;
+						decimal indOverallScoreKPIPerformanceWeightSingle = 0, indOverallScoreKPIPerformanceWeight = 0;
+
+						SPList listCategories = properties.Web.Lists.TryGetList("Categories");
+
+						int lowestStart = 4; // done for new joiner
+
+						foreach (SPListItem itemUserKPI in itemsUserKPI)
+						{
+							decimal indOverallScoreKPIPerformance = 0, indOverallScoreKPIPerformanceQ1 = 0, indOverallScoreKPIPerformanceQ2 = 0, indOverallScoreKPIPerformanceQ3 = 0, indOverallScoreKPIPerformanceQ4 = 0;
+
+							SPFieldLookupValue category = new SPFieldLookupValue(Convert.ToString(itemUserKPI["Category"]));
+							SPFieldLookupValue subcategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI["SubCategory"]));
+							SPFieldLookupValue kpiType = new SPFieldLookupValue(Convert.ToString(itemUserKPI["KPIType"]));
+
+							SPListItemCollection itemsCategory = getCategory(listCategories, Convert.ToString(category.LookupValue), Convert.ToString(subcategory.LookupValue), Convert.ToString(year.LookupValue));
+							//SPListItem itemKPIType = listKPIType.GetItemById(kpiType.LookupId);
+
+							int start = Convert.ToInt16(itemUserKPI["Start"]);
+							int end = Convert.ToInt16(itemUserKPI["End"]);
+							int performanceCapping = 100; // Convert.ToInt16(itemKPIType["PerformanceCapping"]);
+
+							lowestStart = start < lowestStart ? start : lowestStart; // done for new joiner
+
+							decimal kpiThreshold = Convert.ToDecimal(itemUserKPI["KPIThreshold"]);
+							decimal pQ4 = Convert.ToDecimal(itemUserKPI["PerformanceQ4"]);
+
+							bool netProfit = Convert.ToBoolean(itemUserKPI["NetProfit"]);
+
+							bool endResultOverwrite = false;
+							if (itemsCategory.Count > 0)
+							{
+								endResultOverwrite = Convert.ToBoolean(itemsCategory[0]["EndResultOverwrite"]);
+							}
+
+							if (endResultOverwrite == false)
+							{
+								if (start == 1) //Q1
+								{
+									kpiPerformanceQ1 += (Convert.ToDecimal(itemUserKPI["PerformanceQ1"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ1 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+
+									// new field Phase III
+									//if (pQ4 >= kpiThreshold)
+									//{
+									indOverallScoreKPIPerformanceQ1 = Convert.ToDecimal(itemUserKPI["PerformanceQ1"]);
+									//}
+								}
+
+								if ((start <= 2)) // Q2 ===&& end >= 2
+								{
+									kpiPerformanceQ2 += (Convert.ToDecimal(itemUserKPI["PerformanceQ2"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ2 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+
+									// new field Phase III
+									//if (pQ4 >= kpiThreshold)
+									//{
+									indOverallScoreKPIPerformanceQ2 = Convert.ToDecimal(itemUserKPI["PerformanceQ2"]);
+									//}
+								}
+
+								if ((start <= 3)) // Q3 ===&& end >= 3
+								{
+									kpiPerformanceQ3 += (Convert.ToDecimal(itemUserKPI["PerformanceQ3"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ3 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+
+									// new field Phase III
+									//if (pQ4 >= kpiThreshold)
+									//{
+									indOverallScoreKPIPerformanceQ3 = Convert.ToDecimal(itemUserKPI["PerformanceQ3"]);
+									//}
+								}
+
+								if ((start <= 4))  // Q4 ===&& end == 4
+								{
+									kpiPerformanceQ4 += (Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ4 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+
+									// new field Phase III
+									//if (pQ4 >= kpiThreshold)
+									//{
+									indOverallScoreKPIPerformanceQ4 = Convert.ToDecimal(itemUserKPI["PerformanceQ4"]);
+									//}
+									//else
+									//{
+									//	flagThreshold++;
+									//}
+								}
+								//indOverallScoreKPIPerformance = ((indOverallScoreKPIPerformanceQ1 + indOverallScoreKPIPerformanceQ2 + indOverallScoreKPIPerformanceQ3 + indOverallScoreKPIPerformanceQ4) / (5 - start));
+								//indOverallScoreKPIPerformanceWeightSingle = (Convert.ToDecimal(itemUserKPI["Weight"]) * indOverallScoreKPIPerformance) / 100;
+								//indOverallScoreKPIPerformanceWeight += indOverallScoreKPIPerformanceWeightSingle;
+
+								/* New Code 6-Jab-2026*/
+								decimal chkOverallPerformance = ((indOverallScoreKPIPerformanceQ1 + indOverallScoreKPIPerformanceQ2 + indOverallScoreKPIPerformanceQ3 + indOverallScoreKPIPerformanceQ4) / (5 - start));
+								indOverallScoreKPIPerformance = (kpiType.LookupValue == "Initiative" || netProfit == true) ? indOverallScoreKPIPerformanceQ4 : chkOverallPerformance;
+								indOverallScoreKPIPerformance = indOverallScoreKPIPerformance < kpiThreshold ? 0 : indOverallScoreKPIPerformance;
+
+								indOverallScoreKPIPerformanceWeightSingle = (Convert.ToDecimal(itemUserKPI["Weight"]) * indOverallScoreKPIPerformance) / 100;
+								indOverallScoreKPIPerformanceWeight += indOverallScoreKPIPerformanceWeightSingle;
+								/* New Code 6-Jab-2026*/
+							}
+							else
+							{
+								if (Convert.ToBoolean(itemContract["EndNegativeFlag"]) == true)
+								{
+									//endNegativeResult = Convert.ToDecimal(itemContract["EndNegativeResult"]);
+									endNegativeResult = Convert.ToDecimal(itemContract["EndNegativeResult"]); // Fixed calculating more than one Hold Back
+								}
+								else
+								{
+									endNegativeResult += itemUserKPI["PerformanceQ4"] == null || Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) != 0 ? 0 : Convert.ToDecimal(itemUserKPI["Weight"]);
+								}
+							}
+						}
+
+						decimal performanceQ1 = kpiCappingQ1 == 0 ? 0 : Math.Round(((kpiPerformanceQ1 / kpiCappingQ1) * 100), 2);
+						decimal performanceQ2 = kpiCappingQ2 == 0 ? 0 : Math.Round(((kpiPerformanceQ2 / kpiCappingQ2) * 100), 2);
+						decimal performanceQ3 = kpiCappingQ3 == 0 ? 0 : Math.Round(((kpiPerformanceQ3 / kpiCappingQ3) * 100), 2);
+						decimal performanceQ4 = kpiCappingQ4 == 0 ? 0 : Math.Round(((kpiPerformanceQ4 / kpiCappingQ4) * 100), 2);
+
+						//decimal indOverallScorePerformanceQ1 = SafePercent(indOverallScoreKPIPerformanceQ1, kpiCappingQ1); 
+						//decimal indOverallScorePerformanceQ2 = SafePercent(indOverallScoreKPIPerformanceQ2, kpiCappingQ2); 
+						//decimal indOverallScorePerformanceQ3 = SafePercent(indOverallScoreKPIPerformanceQ3, kpiCappingQ3); 
+						//decimal indOverallScorePerformanceQ4 = SafePercent(indOverallScoreKPIPerformanceQ4, kpiCappingQ4);
+
+						int periodQuater = (4 - lowestStart) + 1; // done for new joiner in mid year
+						decimal endYearResult = Math.Round(((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) / periodQuater) - (endNegativeResult * -1), 2);// done for new joiner
+
+						//decimal indOverallScorePerformance = Math.Round(((indOverallScorePerformanceQ1 + indOverallScorePerformanceQ2 + indOverallScorePerformanceQ3 + indOverallScorePerformanceQ4) / periodQuater) - (endNegativeResult * -1), 2);
+						//decimal indOverallScorePerformance = Math.Round(indOverallScorePerformanceQ4 - (endNegativeResult * -1), 2);// New formulea from Nawal
+						//decimal indOverallScorePerformance = flagThreshold == 0 ? endYearResult : indOverallScoreKPIPerformanceWeight < endYearResult ? (indOverallScoreKPIPerformanceWeight - (endNegativeResult * -1)) : endYearResult;
+						decimal indOverallScorePerformance = (indOverallScoreKPIPerformanceWeight - (endNegativeResult * -1));
+
+						itemContract["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContract["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContract["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContract["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+
+						#region // Fields Start ===== (Dec 10 2025) ======
+						itemContract["EnterpriseScore"] = itemCollectionEnterPrise.Count > 0 ? itemCollectionEnterPrise[0]["EndYearResult"] : 0;
+						itemContract["DirectManagerScore"] = itemContractDirectManager.Count > 0 ? Convert.ToDouble(itemContractDirectManager[0]["EndYearResult"]) : 0;
+						itemContract["IndividualOverallScore"] = indOverallScorePerformance;
+
+						itemContract["EnterpriseOverallScore"] = itemCollectionEnterPrise.Count > 0 ? itemCollectionEnterPrise[0]["IndividualOverallScore"] : 0;
+						itemContract["DirectManagerOverallScore"] = itemContractDirectManager.Count > 0 ? Convert.ToDouble(itemContractDirectManager[0]["IndividualOverallScore"]) : 0;
+						#endregion // New Fields End =======
+
+						itemContract["EndNegativeResult"] = endNegativeResult;
+						// itemContract["EndYearResult"] = Math.Round(((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) / 4) - (endNegativeResult * -1), 2); // done for new joiner
+						itemContract["EndYearResult"] = endYearResult;
+
+						using (EventReceiverManager eventReceiverManager = new EventReceiverManager(true))
+						{
+							itemContract.Update();
+						}
+
+						SPList listContractHistory = properties.Web.Lists.TryGetList("ContractHistory");
+
+						SPListItem itemContractHistoryToAdd = listContractHistory.AddItem();
+
+						itemContractHistoryToAdd["Contract"] = lookupContract;
+						itemContractHistoryToAdd["Employee"] = lookupEmployee.LookupValue;
+						itemContractHistoryToAdd["Year"] = itemContract["Year"];
+						itemContractHistoryToAdd["Status"] = itemContract["Status"];
+						itemContractHistoryToAdd["Stage"] = itemContract["Stage"];
+						itemContractHistoryToAdd["Action"] = Convert.ToBoolean(currentItem["IsCorporate"]) ? "Corporate KPI - Update" : "User KPI - Update";
+						itemContractHistoryToAdd["ActionBy"] = properties.Web.CurrentUser.Name;
+						itemContractHistoryToAdd["KPIDescription"] = currentItem["KPIDescription"];
+						itemContractHistoryToAdd["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContractHistoryToAdd["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContractHistoryToAdd["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContractHistoryToAdd["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+						itemContractHistoryToAdd["EndNegativeResult"] = endNegativeResult;
+						itemContractHistoryToAdd["EndYearResult"] = Math.Round((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) - (endNegativeResult * -1), 2);
+
+						itemContractHistoryToAdd.Update();
+
+						//if (Convert.ToBoolean(currentItem["isDeleted"]) == true)
+						//{
+						//	currentItem.Delete();
+						//}
+
+					}
+					catch (Exception ex)
+					{
+						var msg = ex.InnerException != null ? ex.InnerException.ToString() : ex.ToString();
+						LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI Item Updated Event Receiver\n" + msg);
+						throw;
+					}
+				}
+				properties.Web.AllowUnsafeUpdates = false;
+			});
+		}
+
+		/// <summary>
+		/// An item is deleting.
+		/// </summary>
+		public override void ItemDeleting(SPItemEventProperties properties)
+		{
+			base.ItemDeleting(properties);
+			SPSecurity.RunWithElevatedPrivileges(delegate ()
+			{
+				properties.Web.AllowUnsafeUpdates = true;
+
+				using (SPWeb web = properties.OpenWeb())
+				{
+					try
+					{
+						SPListItem currentItem = properties.ListItem;
+
+						if (currentItem == null)
+						{
+							return;
+						}
+
+						SPList listUserKPI = properties.Web.Lists.TryGetList("UserKPI");
+						SPFieldLookupValue lookupContract = new SPFieldLookupValue(Convert.ToString(currentItem["Contract"]));
+						SPListItemCollection itemsUserKPI = getUserKPI(listUserKPI, lookupContract.LookupId, currentItem.ID, true);
+
+						SPList listContract = properties.Web.Lists.TryGetList("Contract");
+						SPListItem itemContract = listContract.GetItemById(lookupContract.LookupId);
+						SPFieldLookupValue lookupEmployee = new SPFieldLookupValue(Convert.ToString(itemContract["Employee"]));
+
+						decimal kpiPerformanceQ1 = 0, kpiPerformanceQ2 = 0, kpiPerformanceQ3 = 0, kpiPerformanceQ4 = 0;
+						decimal kpiCappingQ1 = 0, kpiCappingQ2 = 0, kpiCappingQ3 = 0, kpiCappingQ4 = 0;
+						decimal endNegativeResult = 0;
+
+						SPList listCategories = properties.Web.Lists.TryGetList("Categories");
+						SPList listKPIType = properties.Web.Lists.TryGetList("Types");
+
+						if (itemsUserKPI.Count == 1 || itemsUserKPI.Count == 0)
+						{
+							itemContract["PerformanceQ1"] = 0;
+							itemContract["PerformanceQ2"] = 0;
+							itemContract["PerformanceQ3"] = 0;
+							itemContract["PerformanceQ4"] = 0;
+
+							itemContract["EndNegativeResult"] = endNegativeResult;
+							itemContract["EndYearResult"] = 0;
+							itemContract.Update();
+							return;
+						}
+
+						foreach (SPListItem itemUserKPI in itemsUserKPI)
+						{
+							SPFieldLookupValue category = new SPFieldLookupValue(Convert.ToString(itemUserKPI["Category"]));
+							SPFieldLookupValue subcategory = new SPFieldLookupValue(Convert.ToString(itemUserKPI["SubCategory"]));
+							SPFieldLookupValue kpiType = new SPFieldLookupValue(Convert.ToString(itemUserKPI["KPIType"]));
+
+							SPFieldLookupValue year = new SPFieldLookupValue(Convert.ToString(itemContract["Year"]));
+
+							SPListItemCollection itemsCategory = getCategory(listCategories, Convert.ToString(category.LookupValue), Convert.ToString(subcategory.LookupValue), Convert.ToString(year.LookupValue));
+							SPListItem itemKPIType = listKPIType.GetItemById(kpiType.LookupId);
+
+							int start = Convert.ToInt16(itemUserKPI["Start"]);
+							int end = Convert.ToInt16(itemUserKPI["End"]);
+							int performanceCapping = Convert.ToInt16(itemKPIType["PerformanceCapping"]);
+
+							if (Convert.ToBoolean(itemUserKPI["IsCascade"]) && (Convert.ToString(itemContract["Status"]) == "New" || Convert.ToString(itemContract["Stage"]) == "Planning"))
+							{
+								SPListItemCollection itemsCascadeChildUserKPI = getChildUserKPIByCascadeParent(listUserKPI, itemUserKPI.ID);
+
+								foreach (SPListItem itemCascadeChildUserKPI in itemsCascadeChildUserKPI)
+								{
+									using (EventReceiverManager eventReceiverManager = new EventReceiverManager(true))
+									{
+										SPFieldLookupValue lookupChildEmployee = new SPFieldLookupValue(Convert.ToString(itemCascadeChildUserKPI["Employee"]));
+										SPListItemCollection itemChildContract = getContract(listContract, lookupChildEmployee.LookupId, Convert.ToString(itemCascadeChildUserKPI["Year"]));
+										//=========== Do Only if Status not equal to New and Stage equal to Planning			
+										if (Convert.ToString(itemChildContract[0]["Status"]) != "New" || Convert.ToString(itemChildContract[0]["Stage"]) != "Planning")
+										{
+											itemChildContract[0]["Status"] = "Return";
+											itemChildContract[0]["Stage"] = "Planning";
+											itemChildContract[0]["Period"] = "Initial";
+											itemChildContract[0].Update();
+										}
+										//=============================================
+									}
+								}
+							}
+
+							bool endResultOverwrite = false;
+							if (itemsCategory.Count > 0)
+							{
+								endResultOverwrite = Convert.ToBoolean(itemsCategory[0]["EndResultOverwrite"]);
+							}
+
+							if (endResultOverwrite == false)
+							{
+								if (start == 1 && (itemUserKPI["PerformanceQ1"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ1"]) != 0) && (itemUserKPI["ActualQ1"] != null || Convert.ToDecimal(itemUserKPI["ActualQ1"]) != 0)) // Q1
+								{
+									kpiPerformanceQ1 += (Convert.ToDecimal(itemUserKPI["PerformanceQ1"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ1 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
+
+								if ((start <= 2) && (itemUserKPI["PerformanceQ2"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ2"]) != 0) && (itemUserKPI["ActualQ2"] != null || Convert.ToDecimal(itemUserKPI["ActualQ2"]) != 0)) // Q2
+								{// && end >= 2
+									kpiPerformanceQ2 += (Convert.ToDecimal(itemUserKPI["PerformanceQ2"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ2 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
+
+								if ((start <= 3) && (itemUserKPI["PerformanceQ3"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ3"]) != 0) && (itemUserKPI["ActualQ3"] != null || Convert.ToDecimal(itemUserKPI["ActualQ3"]) != 0)) // Q3
+								{// && end >= 3
+									kpiPerformanceQ3 += (Convert.ToDecimal(itemUserKPI["PerformanceQ3"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ3 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
+
+								if ((start <= 4) && (itemUserKPI["PerformanceQ4"] != null || Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) != 0) && (itemUserKPI["ActualQ4"] != null || Convert.ToDecimal(itemUserKPI["ActualQ4"]) != 0)) // Q4
+								{//&& end == 4
+									kpiPerformanceQ4 += (Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) * Convert.ToDecimal(itemUserKPI["Weight"]));
+									kpiCappingQ4 += (Convert.ToDecimal(performanceCapping) * Convert.ToDecimal(itemUserKPI["Weight"]));
+								}
+							}
+							else
+							{
+								endNegativeResult = itemUserKPI["PerformanceQ4"] == null || Convert.ToDecimal(itemUserKPI["PerformanceQ4"]) != 0 ? 0 : Convert.ToDecimal(itemUserKPI["Weight"]);
+							}
+						}
+
+						decimal performanceQ1 = Math.Round(((kpiPerformanceQ1 / kpiCappingQ1) * 100), 2);
+						decimal performanceQ2 = Math.Round(((kpiPerformanceQ2 / kpiCappingQ2) * 100), 2);
+						decimal performanceQ3 = Math.Round(((kpiPerformanceQ3 / kpiCappingQ3) * 100), 2);
+						decimal performanceQ4 = Math.Round(((kpiPerformanceQ4 / kpiCappingQ4) * 100), 2);
+
+						itemContract["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContract["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContract["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContract["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+
+						itemContract["EndNegativeResult"] = endNegativeResult;
+						itemContract["EndYearResult"] = Math.Round(((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) / 4) - (endNegativeResult * -1), 2);
+
+						using (EventReceiverManager eventReceiverManager = new EventReceiverManager(true))
+						{
+							itemContract.Update();
+						}
+
+						SPList listContractHistory = properties.Web.Lists.TryGetList("ContractHistory");
+
+						SPListItem itemContractHistoryToAdd = listContractHistory.AddItem();
+
+						itemContractHistoryToAdd["Contract"] = lookupContract;
+						itemContractHistoryToAdd["Employee"] = lookupEmployee.LookupValue;
+						itemContractHistoryToAdd["Year"] = itemContract["Year"];
+						itemContractHistoryToAdd["Status"] = itemContract["Status"];
+						itemContractHistoryToAdd["Stage"] = itemContract["Stage"];
+						itemContractHistoryToAdd["Action"] = Convert.ToBoolean(currentItem["IsCorporate"]) ? "Corporate KPI - Deleted" : "User KPI - Deleted";
+						itemContractHistoryToAdd["ActionBy"] = properties.Web.CurrentUser.Name;
+						itemContractHistoryToAdd["KPIDescription"] = currentItem["KPIDescription"];
+						itemContractHistoryToAdd["PerformanceQ1"] = Math.Round(performanceQ1, 2);
+						itemContractHistoryToAdd["PerformanceQ2"] = Math.Round(performanceQ2, 2);
+						itemContractHistoryToAdd["PerformanceQ3"] = Math.Round(performanceQ3, 2);
+						itemContractHistoryToAdd["PerformanceQ4"] = Math.Round(performanceQ4, 2);
+						itemContractHistoryToAdd["EndNegativeResult"] = endNegativeResult;
+						itemContractHistoryToAdd["EndYearResult"] = Math.Round((performanceQ1 + performanceQ2 + performanceQ3 + performanceQ4) - (endNegativeResult * -1), 2);
+
+						itemContractHistoryToAdd.Update();
+
+						if (Convert.ToBoolean(currentItem["isDeleted"]) == true)
+						{
+							currentItem.Delete();
+						}
+					}
+					catch (Exception ex)
+					{
+						LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI Item Deleting Event Receiver\n" + ex.ToString());
+					}
+				}
+				properties.Web.AllowUnsafeUpdates = false;
+			});
+		}
+		private SPListItemCollection getUserKPI(SPList listUserKPI, int ContractId, int userKPIID = 0, bool isDeleting = false)
+		{
+			SPListItemCollection itemCollectionUserKPI = null;
+			string Query;
+			if (isDeleting == false)
+			{
+				Query = $@"<Where>
+											<And>
+												<Eq>
+														<FieldRef Name='Contract' LookupId='TRUE'/>
+														<Value Type='Lookup'>{ContractId}</Value>
+												</Eq>
+												<Eq>
+													<FieldRef Name='isDeleted' />
+													<Value Type='Boolean'>false</Value>
+											 </Eq>
+											</And>
+										</Where>";
+			}
+			else
+			{
+				Query = $@"<Where>
+										<And>
+											 <And>
+													<Eq>
+														 <FieldRef Name='Contract' LookupId='TRUE'/>
+														 <Value Type='Lookup'>{ContractId}</Value>
+													</Eq>
+													<Neq>
+														 <FieldRef Name='ID' />
+														 <Value Type='Counter'>{userKPIID}</Value>
+													</Neq>
+											 </And>
+											 <Eq>
+													<FieldRef Name='isDeleted' />
+													<Value Type='Boolean'>false</Value>
+											 </Eq>
+										</And>
+								 </Where>";
+			}
+			try
+			{
+				SPQuery q = new SPQuery()
+				{
+					Query = Query
+				};
+
+				itemCollectionUserKPI = listUserKPI.GetItems(q);
+			}
+			catch (Exception ex)
+			{
+				LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI getUserKPI\n" + ex.Message);
+			}
+
+			return itemCollectionUserKPI;
+		}
+		private SPListItemCollection getChildUserKPIByCascadeParent(SPList listUserKPI, int cascadeParentID)
+		{
+			SPListItemCollection itemCollectionUserKPI = null;
+			try
+			{
+				SPQuery q = new SPQuery()
+				{
+					Query = $@"<Where>
+											<And>
+												 <Eq>
+														<FieldRef Name='CascadeParent' LookupId='TRUE'/>
+														<Value Type='Lookup'>{cascadeParentID}</Value>
+												 </Eq>
+												 <Eq>
+														<FieldRef Name='isDeleted' />
+														<Value Type='Boolean'>false</Value>
+												 </Eq>
+											</And>
+									 </Where>"
+				};
+
+				itemCollectionUserKPI = listUserKPI.GetItems(q);
+			}
+			catch (Exception ex)
+			{
+				LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI getUserKPIByCascadeParent\n" + ex.Message);
+			}
+
+			return itemCollectionUserKPI;
+		}
+		private SPListItemCollection getCategory(SPList listCategories, string category, string subcategory, string year)
+		{
+			SPListItemCollection itemCollectionCategory = null;
+			try
+			{
+				SPQuery q = new SPQuery()
+				{
+					Query = $@"<Where>
+											<And>
+												 <And>
+														<Eq>
+															 <FieldRef Name='Title' />
+															 <Value Type='Text'>{category}</Value>
+														</Eq>
+														<Eq>
+															 <FieldRef Name='SubCategory' />
+															 <Value Type='Text'>{subcategory}</Value>
+														</Eq>
+												 </And>
+												 <Eq>
+														<FieldRef Name='Year' />
+														<Value Type='Lookup'>{year}</Value>
+												 </Eq>
+											</And>
+									 </Where>"
+				};
+
+				itemCollectionCategory = listCategories.GetItems(q);
+			}
+			catch (Exception ex)
+			{
+				LoggingService.LogError("EPMS Event Receiver Error", "EPMS UserKPI getCategory\n" + ex.Message);
+			}
+
+			return itemCollectionCategory;
+		}
+		private SPListItemCollection getContract(SPList listContract, int employeeId, string year)
+		{
+			SPListItemCollection itemCollectionContract = null;
+			try
+			{
+				SPQuery q = new SPQuery()
+				{
+					Query = $@"<Where>
+											<And>
+												 <Eq>
+														<FieldRef Name='Employee' LookupId='TRUE'/>
+														<Value Type='Lookup'>{employeeId}</Value>
+												 </Eq>
+												 <Eq>
+														<FieldRef Name='Year'/>
+														<Value Type='Lookup'>{year}</Value>
+												 </Eq>
+											</And>
+									 </Where>"
+				};
+
+				itemCollectionContract = listContract.GetItems(q);
+			}
+			catch (Exception ex)
+			{
+				LoggingService.LogError("EPMS Event Receiver Error", "EPMS getContract\n" + ex.Message);
+			}
+
+			return itemCollectionContract;
+		}
+		private SPListItemCollection getContractByEmployeeId(SPList listContract, string employeeId, string year)
+		{
+			SPListItemCollection itemCollectionContract = null;
+			try
+			{
+				SPQuery q = new SPQuery()
+				{
+					Query = $@"<Where>
+											<And>
+												 <Eq>
+														<FieldRef Name='Year' />
+														<Value Type='Lookup'>{year}</Value>
+												 </Eq>
+												 <Eq>
+														<FieldRef Name='Employee_x003a_EmployeeId' />
+														<Value Type='Lookup'>{employeeId}</Value>
+												 </Eq>
+											</And>
+									 </Where>"
+				};
+
+				itemCollectionContract = listContract.GetItems(q);
+			}
+			catch (Exception ex)
+			{
+				LoggingService.LogError("EPMS Event Receiver Error", "EPMS getContractDirectManager\n" + ex.Message);
+			}
+
+			return itemCollectionContract;
+		}
+		private decimal SafePercent(object numeratorObj, object denomObj)
+		{
+			decimal numerator = numeratorObj == null ? 0m : Convert.ToDecimal(numeratorObj);
+			decimal denom = denomObj == null ? 0m : Convert.ToDecimal(denomObj);
+			if (denom == 0m) return 0m;
+			return Math.Round((numerator / denom) * 100m, 2);
+		}
+	}
+}
